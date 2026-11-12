@@ -85,6 +85,8 @@ import com.dengying.player.ui.components.GlassChip
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.LoadingView
 import com.dengying.player.ui.components.Poster
+import com.dengying.player.ui.components.GlassPage
+import com.dengying.player.ui.components.GlassPullIndicator
 import com.dengying.player.ui.navigation.Routes
 import com.dengying.player.ui.theme.Glass
 import com.dengying.player.ui.theme.Palette
@@ -195,6 +197,11 @@ fun IndexScreen(
     }
     val pagerState = androidx.compose.foundation.pager.rememberPagerState { 4 }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // 首页下拉刷新的转圈要画在玻璃顶栏之上，而顶栏在 GlassPage 的 overlay 层，
+    // 所以 state 提到外层，由首页那一页的下拉手势写入、overlay 读取。
+    // 必须在这里 remember：手势只会更新它拿到的那一个 state，换一个实例 overlay 就永远读到 0。
+    val homePullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    var homePullRefreshing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // 【Pager → 数据】滑停之后按窗格触发加载：
     // 首页吃推荐槽位(0)，分类/发现各自吃所选分类槽位，我的不拉数据。
     LaunchedEffect(pagerState.settledPage) {
@@ -252,11 +259,12 @@ fun IndexScreen(
                 .distinctBy { it.vod_name ?: it.vod_id.toString() }
         }
     }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Palette.AppBg),
-    ) {
+    // 【透射源】拆成「内容层（被采样）+ 玻璃浮层（去采样）」两个兄弟层：
+    // 海报滚到顶栏/Dock 背后时，玻璃里透出的是真实封面而不是一片色雾。
+    // 玻璃件绝不能留在 content 里，否则会录到自己 → 自引用栈溢出。
+    GlassPage(
+        modifier = Modifier.fillMaxSize(),
+        content = {
         // ---- 内容层（铺满全屏，从玻璃件背后穿过） ----
         androidx.compose.foundation.pager.HorizontalPager(
             state = pagerState,
@@ -285,10 +293,16 @@ fun IndexScreen(
                             savedScroll[0] = it
                         }
                     }
+                    // 【下拉刷新】转圈不画在这里。内容层在 GlassPage 的采样层里，
+                    // 玻璃顶栏是浮在它之上的 overlay，转圈画在内容层会被顶栏整个盖住
+                    // （用户实测：下拉时看不见转圈）。手势写入外层那一个 state，转圈画进 overlay。
+                    homePullRefreshing = cs.refining
                     androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                         isRefreshing = cs.refining,
                         onRefresh = { vm.refresh(0) },
+                        state = homePullState,
                         modifier = Modifier.fillMaxSize(),
+                        indicator = {},
                     ) {
                         RecommendPage(
                             cs = cs,
@@ -345,6 +359,8 @@ fun IndexScreen(
                 )
             }
         }
+        },
+        overlay = {
         // ---- 悬浮层（玻璃顶栏：品牌 + 长条搜索框）----
         // v5：「我的」页整条隐藏（该页自带页头 + 右上角设置钮）；搜索改长条。
         androidx.compose.animation.AnimatedVisibility(
@@ -442,7 +458,20 @@ fun IndexScreen(
             },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
-    }
+        // 首页下拉刷新的转圈：必须在 overlay 层，否则被玻璃顶栏盖住看不见。
+        // 只在首页显示，顶栏正下方居中。
+        if (pagerState.targetPage == 0) {
+            GlassPullIndicator(
+                state = homePullState,
+                isRefreshing = homePullRefreshing,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(top = 56.dp + 8.dp),
+            )
+        }
+        },
+    )
 }
 
 /** Dock 项 key，下标与 Pager 页一一对应。 */
@@ -469,8 +498,11 @@ private fun RecommendPage(
     when {
         // 首拉中：占位避免闪空
         cs.loading && cs.sections.isEmpty() -> LoadingView()
-        // 真失败（网络/源异常）：可重试
-        cs.errMsg != null && cs.sections.isEmpty() -> ErrorView(message = cs.errMsg ?: "", onRetry = onRetry)
+        // 真失败（网络/源异常）：可重试。
+        // 【v5 修复】原判断是 `cs.errMsg != null`——errMsg 是**非空 String**，
+        // 该条件恒为 true，于是「版块为空但没有错误」时也走 ErrorView，且 message
+        // 是空串 → 屏幕一片空白，看着就像「下拉刷新没反应」。改成按空串判断。
+        cs.sections.isEmpty() && cs.errMsg.isNotEmpty() -> ErrorView(message = cs.errMsg, onRetry = onRetry)
         // 源未启用或版块拉空：给引导文案，不算失败态
         cs.sections.isEmpty() -> Column(
             modifier = Modifier
@@ -487,23 +519,25 @@ private fun RecommendPage(
                 modifier = Modifier.padding(top = 6.dp),
             )
         }
-        else -> androidx.compose.foundation.lazy.LazyColumn(
-            state = state,
-            modifier = Modifier.fillMaxSize(),
-            // 顶部垫出悬浮层的空间，底部垫出 Dock 的空间：内容从这里开始露出，
-            // 滚动时穿过玻璃背后（Liquid Glass 采样源）
-            contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            // 【v5】首页不再放频道 tab 行（用户反馈：首页里不要 chips）——
-            // cs.homeTabs 数据仍在（VM 缓存），只是不再渲染。
-            items(cs.sections.size, key = { "sec-$it" }) { i ->
-                val sec = cs.sections[i]
-                SectionRail(
-                    title = sec.title,
-                    items = sec.items,
-                    onOpenDetail = onOpenDetail,
-                )
+        else -> Box(Modifier.fillMaxSize()) {
+            androidx.compose.foundation.lazy.LazyColumn(
+                state = state,
+                modifier = Modifier.fillMaxSize(),
+                // 顶部垫出悬浮层的空间，底部垫出 Dock 的空间：内容从这里开始露出，
+                // 滚动时穿过玻璃背后（Liquid Glass 采样源）
+                contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                // 【v5】首页不再放频道 tab 行（用户反馈：首页里不要 chips）——
+                // cs.homeTabs 数据仍在（VM 缓存），只是不再渲染。
+                items(cs.sections.size, key = { "sec-$it" }) { i ->
+                    val sec = cs.sections[i]
+                    SectionRail(
+                        title = sec.title,
+                        items = sec.items,
+                        onOpenDetail = onOpenDetail,
+                    )
+                }
             }
         }
     }
@@ -772,10 +806,22 @@ private fun CategoryPane(
     onRefresh: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
+        // 同首页：玻璃 indicator 落在分段控件**下方**，不压在胶囊上。
+        val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = cs.refining,
             onRefresh = onRefresh,
+            state = pullState,
             modifier = Modifier.fillMaxSize(),
+            indicator = {
+                GlassPullIndicator(
+                    state = pullState,
+                    isRefreshing = cs.refining,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = topPadding + 52.dp),
+                )
+            },
         ) {
             Column(Modifier.fillMaxSize()) {
                 // 分类分段控件（v5.2）：与底部 Dock 同款交互——玻璃胶囊容器 +
@@ -1219,6 +1265,7 @@ private fun DiscoverVideoCard(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(22.dp),
             elevation = 10.dp,
+            liquid = false,
         ) {
             Column {
                 // 16:9 播放窗：视频与海报同一几何，起播瞬间无跳变。

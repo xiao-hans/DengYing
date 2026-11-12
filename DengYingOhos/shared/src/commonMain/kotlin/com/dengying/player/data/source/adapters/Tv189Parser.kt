@@ -10,6 +10,7 @@ import com.dengying.player.core.RequestOutcome
 import com.dengying.player.core.VideoItem
 import com.dengying.player.data.json.JsonX
 import com.dengying.player.data.source.crypto.Digest
+import kotlinx.serialization.json.JsonArray
 
 /**
  * KMP P3：天翼视讯（tv189）纯解析层 —— 从 `:app` 的 `Tv189Adapter` 切出。
@@ -327,6 +328,11 @@ object Tv189Parser {
      * （金样本 tv189_home 实录），没有名字的卡片没有意义，跳过。
      * 【空版块丢弃】不少版块条目放在 `children`（嵌套子版块，多为直播/剧场位）
      * 或为空，v1 不展开嵌套，只保留有直出条目的版块。
+     *
+     * 【换一换备用池】部分版块（重磅推荐、精选好剧、爆款短剧）带 `changeBat`：
+     * 与当前展示的片完全不重复的一批备用片，源站自己的「换一换」池。
+     * 接在当前展示的片后面，下拉刷新时由 [com.dengying.player.ui.viewmodel.IndexViewModel]
+     * 轮换展示——源站这份数据是运营固定排的，直拉网络也换不出新片。
      */
     fun parseSections(source: CmsSource, body: String?): List<HomeSection> {
         val root = JsonX.parseObject(body) ?: return emptyList()
@@ -336,22 +342,10 @@ object Tv189Parser {
             val mod = JsonX.optObjectAt(mods, i) ?: continue
             val inner = JsonX.optObject(mod, "data") ?: continue
             val rows = JsonX.optArray(inner, "data") ?: continue
-            val items = ArrayList<VideoItem>()
-            for (j in 0 until JsonX.len(rows)) {
-                val r = JsonX.optObjectAt(rows, j) ?: continue
-                if (JsonX.int(r, "clickType", -1) != 0) continue
-                val name = JsonX.str(r, "title", "")
-                if (name.isEmpty()) continue
-                val cid = JsonX.str(r, "contentId", "")
-                val id = cidToLong(cid)
-                if (id <= 0) continue
-                items += VideoItem(
-                    vod_id = id,
-                    vod_name = name,
-                    vod_pic = JsonX.str(r, "cover", ""),
-                    vod_uri = cid,
-                    _source = source.key,
-                )
+            val items = collectItems(source, rows)
+            val shown = items.map { it.vod_id }.toHashSet()
+            for (extra in collectItems(source, JsonX.optArray(inner, "changeBat"))) {
+                if (shown.add(extra.vod_id)) items += extra
             }
             if (items.isEmpty()) continue
             val labelName = inner["label"]?.let { JsonX.str(JsonX.obj(it), "name", "") } ?: ""
@@ -362,5 +356,30 @@ object Tv189Parser {
             out += HomeSection(title = title, items = items)
         }
         return out
+    }
+
+    /**
+     * 版块条目 → VideoItem。只收 `clickType==0`（影视内容）、有标题、
+     * contentId 能解析成 id 的条目，规则与 [parseSections] 原内联循环一致。
+     */
+    private fun collectItems(source: CmsSource, rows: JsonArray?): ArrayList<VideoItem> {
+        val items = ArrayList<VideoItem>()
+        for (j in 0 until JsonX.len(rows)) {
+            val r = JsonX.optObjectAt(rows, j) ?: continue
+            if (JsonX.int(r, "clickType", -1) != 0) continue
+            val name = JsonX.str(r, "title", "")
+            if (name.isEmpty()) continue
+            val cid = JsonX.str(r, "contentId", "")
+            val id = cidToLong(cid)
+            if (id <= 0) continue
+            items += VideoItem(
+                vod_id = id,
+                vod_name = name,
+                vod_pic = JsonX.str(r, "cover", ""),
+                vod_uri = cid,
+                _source = source.key,
+            )
+        }
+        return items
     }
 }
