@@ -26,7 +26,10 @@ import com.dengying.player.player.PlayerEngineHost
 import com.dengying.player.platform.Clock
 import com.dengying.player.platform.Log
 import com.dengying.player.platform.ioDispatcher
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /**
@@ -153,6 +156,13 @@ class PlayerViewModel(
         val castBlockReason: String = "",
         val castMsg: String = "",
         val castLink: CastUtil.CastabilityKind = CastUtil.CastabilityKind.NotCastable,
+        /**
+         * 一次性轻提示（如「该清晰度暂时不可用，已回退原档位」）。
+         *
+         * 与 [errMsg] 的区别：errMsg 是常驻错误浮层（带重试/返回），
+         * 这里只表示一次可自愈的告知，几秒后自动清空，不遮挡控制层。
+         */
+        val noticeMsg: String = "",
     )
 
     var state by mutableStateOf(UiState())
@@ -180,6 +190,9 @@ class PlayerViewModel(
      * 而"漏掉通知 = 黑屏"正是真机踩过的坑。
      */
     private fun bindEngine(e: PlayerEngine?) {
+        // 已清理的 VM 不得再挂引擎：否则页面销毁后仍会被重新 addListener（B-7 回归）。
+        // 解绑（e == null）必须放行——onCleared 正是靠它注销监听器。
+        if (cleared && e != null) return
         val prev = engine
         if (prev === e) return
         if (prev != null) {
@@ -851,6 +864,7 @@ class PlayerViewModel(
     // ---------------- 引擎起停 ----------------
 
     fun attachEngine() {
+        if (cleared) return
         if (engine != null) return
         // 【用全局唯一引擎】官方推荐做法，见 PlaybackEngineHolder 的说明。
         // 初版在这里新建引擎，与详情页内嵌位各持一个，导致解码器抢占。
@@ -877,6 +891,8 @@ class PlayerViewModel(
      * 另加 `startedUrl` 记录"当前已交给播放器的地址"，用它做真正的幂等判据。
      */
     private fun startEngine() {
+        // 已清理的 VM 不得重新挂引擎/起播（换档探测中离开页面的路径会走到这里）。
+        if (cleared) return
         if (!urlReady) return
         // 引擎在 init 里已建；若因换集被释放而尚未重建，先重建再起播
         if (engine == null) {
@@ -920,6 +936,8 @@ class PlayerViewModel(
         val targetHeaders = resolvedHeaders
         val resume = resumePositionOrZero()
         starting = true
+        // 起播代际：旧起播的 finally 不得把新起播刚置上的 starting 复位。
+        val startId = ++startSeq
         viewModelScope.launch {
             try {
                 state = state.copy(status = "正在初始化播放器…")
@@ -935,7 +953,7 @@ class PlayerViewModel(
                 // 预热后 `MediaCache.wrap` 命中单例立即返回，主线程不再被阻塞。
                 com.dengying.player.data.cache.MediaCache.warmUp()
                 // 预热期间地址被换档/换集改写 → 本次起播已过期，交给新起播处理。
-                if (resolvedUrl != targetUrl) {
+                if (cleared || resolvedUrl != targetUrl) {
                     PlaybackProbe.note("startEngine-aborted-url-changed", "len=${targetUrl.length}")
                     return@launch
                 }
@@ -958,15 +976,28 @@ class PlayerViewModel(
                     episodeIndex = state.curEpIndex,
                     episodeName = currentEpName,
                 )
+            } catch (e: CancellationException) {
+                // VM 清理导致的取消不是播放失败，不能落错误态，必须原样抛出。
+                throw e
             } catch (e: Exception) {
                 PlaybackProbe.note("startEngine-exception", "${e::class.simpleName ?: "Exception"}: ${e.message?.take(120)}")
-                state = state.copy(status = "", errMsg = "播放器初始化失败，请重试")
+                if (!cleared) state = state.copy(status = "", errMsg = "播放器初始化失败，请重试")
             } finally {
-                // 无论成败都复位——这是"偶现"不再复发的关键
-                starting = false
+                // 无论成败都复位——这是"偶现"不再复发的关键。
+                // 只复位"自己这一代"：期间若有新起播接管，starting 归新起播所有。
+                if (startSeq == startId) starting = false
+                // 起播期间地址又被换档/换集改写（预热窗口内换了目标）：
+                // 用**最新已解析**的地址补一次起播，否则会停在旧媒体上永久黑屏。
+                if (!cleared && urlReady && resolvedUrl.isNotEmpty() && resolvedUrl != targetUrl) {
+                    PlaybackProbe.note("startEngine-restart-latest", "len=${resolvedUrl.length}")
+                    startEngine()
+                }
             }
         }
     }
+
+    /** 起播代际（见 [startEngine] 的 finally，防止旧起播复位新起播的 starting） */
+    private var startSeq: Long = 0L
 
     /**
      * 当前已交给播放器的地址。
@@ -1224,53 +1255,114 @@ class PlayerViewModel(
      */
     fun applyQuality(url: String) {
         if (url.isEmpty() || url == state.selectedVariant) return
+        // 【单 Job + 代际】连点换档时，旧探测必须作废：
+        // 否则最后完成的 probe 会成为赢家（而不是最后点击的档位），
+        // 且旧探测失败还会用 previousVariant 覆盖用户的新选择。
+        qualitySwitchJob?.cancel()
+        val seq = ++qualitySwitchSeq
         switchTried = false
         val keep = state.curTime
-        // 回退用的原地址/原档位：探测失败时必须还原，不能停在半切换状态。
-        val previousUrl = resolvedUrl
+        val keepTotal = state.totalTime
+        // 回退目标必须是**已交给引擎的地址**。换集与换档交叠时 resolvedUrl
+        // 可能刚被写成原始 epUrl/token（尚未解析），绝不能原样回退给引擎。
+        val previousUrl = if (startedUrl.isNotEmpty()) startedUrl else resolvedUrl
         val previousVariant = state.selectedVariant
         state = state.copy(showQualitySheet = false, selectedVariant = url, status = "正在切换清晰度…")
 
-        viewModelScope.launch {
+        qualitySwitchJob = viewModelScope.launch {
             // 显式保证主线程：ExoPlayer 的 API 全部要求主线程（真机踩过 wrong-thread 异常）
+            //
+            // 手工 surface 计数成对放在同一 try/finally：取消/异常路径不会只减不加，
+            // 多个 surface 共存时也不会让计数提前归零。已 cleared 时不再补回——
+            // onCleared 已经做过一次 surfaceInactive。
             engineHost.surfaceInactive()
-            bindEngine(null)
-            starting = false
-            urlReady = false
-            state = state.copy(prepared = false, buffering = false)
+            try {
+                bindEngine(null)
+                urlReady = false
+                state = state.copy(prepared = false, buffering = false)
 
-            val reachable = runCatching {
-                val probe = probeReachability(url)
-                probe.m3u8Ok && (probe.segOk || probe.segHost.isEmpty())
-            }.getOrDefault(false)
+                val reachable = try {
+                    val probe = probeReachability(url)
+                    probe.m3u8Ok && (probe.segOk || probe.segHost.isEmpty())
+                } catch (e: CancellationException) {
+                    // 【阻断修复】探测是最长 10s 的 suspend 网络调用。runCatching 会把
+                    // 取消一并吞掉，导致 onCleared 之后仍继续 surfaceActive/startEngine，
+                    // 单例引擎重新持有已清理的 VM（B-7 回归）。取消必须原样抛出。
+                    throw e
+                } catch (e: Exception) {
+                    PlaybackProbe.note("quality-probe-failed", e::class.simpleName ?: "Exception")
+                    false
+                }
+                // 探测返回后可能已被取消、或已被更新一轮换档接管：本次结果直接作废。
+                ensureActive()
+                if (cleared || seq != qualitySwitchSeq) {
+                    PlaybackProbe.note("quality-switch-stale", "seq=$seq latest=$qualitySwitchSeq")
+                    return@launch
+                }
 
-            if (reachable) {
-                resolvedUrl = url
-                state = state.copy(curTime = keep, totalTime = 0, prepared = false, status = "")
-                urlReady = true
-                // 由 startEngine 消费并交给 setMedia，换档后从原进度继续。
-                pendingResumeMs = keep
-            } else {
-                // 【必须回退并重新起播】旧实现探测失败后直接 return：engine 停在 null、
-                // urlReady=false，界面永久黑屏且无恢复路径（审计 B-2）。这里把原地址
-                // 交还引擎，按保留进度继续播，并给出可见提示。
-                resolvedUrl = previousUrl
-                state = state.copy(
-                    selectedVariant = previousVariant,
-                    curTime = keep,
-                    totalTime = 0,
-                    prepared = false,
-                    status = "",
-                    errMsg = "该清晰度暂时不可用，已回退原档位",
-                )
-                urlReady = true
-                pendingResumeMs = keep
+                if (reachable) {
+                    resolvedUrl = url
+                    state = state.copy(curTime = keep, totalTime = 0, prepared = false, status = "")
+                    urlReady = true
+                    // 由 startEngine 消费并交给 setMedia，换档后从原进度继续。
+                    pendingResumeMs = keep
+                } else if (previousUrl.isEmpty()) {
+                    // 没有可回退的已解析地址：留给解析链，不能把未解析地址交给引擎。
+                    state = state.copy(
+                        selectedVariant = previousVariant,
+                        curTime = keep,
+                        totalTime = keepTotal,
+                        prepared = false,
+                        status = "正在准备…",
+                        errMsg = "",
+                    )
+                    resolveUrl()
+                } else {
+                    // 【必须回退并重新起播】旧实现探测失败后直接 return：engine 停在 null、
+                    // urlReady=false，界面永久黑屏且无恢复路径（审计 B-2）。这里把原地址
+                    // 交还引擎，按保留进度继续播，并给出可见提示。
+                    //
+                    // 【非阻断修复】同址回退走 startEngine 的 seek/play 分支，不会再触发
+                    // onReady，所以必须在这里把错误态收敛干净：清 errMsg、恢复 prepared
+                    // 与时长，只留一条几秒后自动消失的轻提示，不能常驻错误浮层。
+                    resolvedUrl = previousUrl
+                    urlReady = true
+                    pendingResumeMs = keep
+                    state = state.copy(
+                        selectedVariant = previousVariant,
+                        curTime = keep,
+                        totalTime = keepTotal,
+                        prepared = true,
+                        status = "",
+                        errMsg = "",
+                        buffering = false,
+                        noticeMsg = "该清晰度暂时不可用，已回退原档位",
+                    )
+                    clearNoticeLater()
+                }
+                // 真正重新绑定引擎并起播新地址（成功）或原地址（回退）。
+                // 换档后 resolvedUrl 与 startedUrl 不同，幂等判据不会误吞 setMedia。
+                startEngine()
+            } finally {
+                if (!cleared) engineHost.surfaceActive()
             }
-            // 上面 surfaceInactive 过一次；起播前补回表面计数，否则离开页面时计数错位。
-            engineHost.surfaceActive()
-            // 真正重新绑定引擎并起播新地址（成功）或原地址（回退）。
-            // 换档后 resolvedUrl 与 startedUrl 不同，幂等判据不会误吞 setMedia。
-            startEngine()
+        }
+    }
+
+    /** 换档 Job：新换档/换集都要先取消它，旧探测结果不得覆盖新选择。 */
+    private var qualitySwitchJob: Job? = null
+
+    /** 换档代际：兜底丢弃"已取消但探测仍返回"的旧结果。 */
+    private var qualitySwitchSeq: Long = 0L
+
+    private var noticeJob: Job? = null
+
+    /** 轻提示自动消失；常驻错误浮层只用于真正不可恢复的失败。 */
+    private fun clearNoticeLater() {
+        noticeJob?.cancel()
+        noticeJob = viewModelScope.launch {
+            delay(3_000)
+            if (state.noticeMsg.isNotEmpty()) state = state.copy(noticeMsg = "")
         }
     }
 
@@ -1322,6 +1414,10 @@ class PlayerViewModel(
             return
         }
         viewModelScope.launch {
+            // 【换集胜过进行中的换档】换集要换的是"集"，交叠时换档结果必须作废，
+            // 否则旧档探测返回后会用上一集的地址起播，把新集顶掉。
+            qualitySwitchJob?.cancel()
+            qualitySwitchSeq++
             persistHistory()
             // 显式保证主线程：ExoPlayer 的 API 全部要求主线程（真机踩过 wrong-thread 异常）
             engineHost.surfaceInactive()
@@ -1441,8 +1537,28 @@ class PlayerViewModel(
         progressLoop.stop()
     }
 
+    /** 仅供 `:ui:jvmTest`：走一次真实的 startEngine 路径（解析链依赖网络，测试不可用）。 */
+    internal fun primeEngineForTest(url: String) {
+        resolvedUrl = url
+        urlReady = true
+        startEngine()
+    }
+
+    /** 仅供 `:ui:jvmTest`：模拟 ViewModel 被清理（`onCleared` 是 protected）。 */
+    internal fun clearForTest() {
+        onCleared()
+    }
+
+    /** onCleared 置位后，任何引擎/起播路径都必须停手（见 B-7 回归）。 */
+    private var cleared = false
+
     override fun onCleared() {
         super.onCleared()
+        // 【最先置位】探测/起播协程即使被取消也可能跑到边界检查之外，
+        // cleared 是最后一道闸：已清理的 VM 不得再改单例引擎或 surface 计数。
+        cleared = true
+        qualitySwitchJob?.cancel()
+        noticeJob?.cancel()
         // 【先停进度循环与监听】否则循环会在 viewModelScope 取消前再写一次状态，
         // 且旧 VM 可能继续响应单例引擎的回调（B-6 / B-7）。
         progressLoop.stop()

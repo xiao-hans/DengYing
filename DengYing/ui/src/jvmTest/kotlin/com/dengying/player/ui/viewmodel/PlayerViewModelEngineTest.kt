@@ -8,6 +8,8 @@ import com.dengying.player.platform.KeyValueStore
 import com.dengying.player.player.PlayerEngine
 import com.dengying.player.player.PlayerEngineHost
 import com.dengying.player.player.PlayerListener
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -175,6 +177,13 @@ class PlayerViewModelEngineTest {
         vm.attachEngine()
 
         try {
+            // 先走一次真实起播，制造生产回退路径的前提：startedUrl == previousUrl。
+            // 否则回退会落到 setMedia 分支，测不到同址 seek/play 的真实形态。
+            vm.primeEngineForTest(OLD_URL)
+            runCurrent()
+            assertEquals(OLD_URL, engine.currentUrl)
+            val setMediaBefore = engine.setMediaCalls.size
+
             engine.emitPlaying()
             advanceTimeBy(1_100)
             assertEquals(25_000L, vm.state.curTime)
@@ -182,15 +191,158 @@ class PlayerViewModelEngineTest {
             vm.applyQuality(NEW_URL)
             runCurrent()
 
-            val call = engine.setMediaCalls.last()
-            assertEquals(OLD_URL, call.first, "探测失败必须回退到原地址")
-            assertEquals(25_000L, call.third, "回退后仍从保留位置继续")
+            assertEquals(
+                setMediaBefore,
+                engine.setMediaCalls.size,
+                "同址回退应走 seek/play，不重复 setMedia",
+            )
+            assertEquals(OLD_URL, engine.currentUrl, "探测失败必须回退到原地址")
             assertNotNull(vm.engine, "回退后引擎必须仍在，不能留下 engine=null 的黑屏")
-            assertTrue(vm.state.errMsg.isNotEmpty(), "回退必须给出可见提示")
+            assertEquals("", vm.state.errMsg, "回退成功后不得留下常驻错误浮层")
+            assertTrue(vm.state.prepared, "回退成功后必须恢复 prepared，否则一直转圈")
+            assertEquals(25_000L, vm.state.curTime, "回退后仍保留原进度")
+            assertTrue(vm.state.noticeMsg.isNotEmpty(), "回退应给一次性轻提示")
             assertNotEquals(NEW_URL, vm.state.selectedVariant, "档位应还原为原档")
         } finally {
             vm.stopProgressLoopForTest()
         }
+    }
+
+    // ------------------------------------------------------------------ 取消 / 并发
+
+    @Test
+    fun `换档探测中 onCleared 后不得再 setMedia 也不得重挂监听器`() = runTest(timeout = 20.seconds) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val engine = RecordingEngine()
+        val gate = CompletableDeferred<Unit>()
+        val vm = newVm(engine) {
+            gate.await()
+            okProbe()
+        }
+        vm.attachEngine()
+
+        try {
+            assertEquals(1, engine.listeners.size, "挂载后 VM 注册了一个监听器")
+
+            vm.applyQuality(NEW_URL)
+            runCurrent()
+            assertEquals(0, engine.listeners.size, "探测期间引擎已解绑")
+
+            // 探测还挂在网络上时页面被销毁
+            vm.clearForTest()
+            gate.complete(Unit)
+            runCurrent()
+
+            assertTrue(engine.setMediaCalls.isEmpty(), "已清理的 VM 不得再对引擎 setMedia")
+            assertEquals(0, engine.listeners.size, "已清理的 VM 不得重新注册监听器")
+        } finally {
+            vm.stopProgressLoopForTest()
+        }
+    }
+
+    @Test
+    fun `快速连续换档只对最后一次档位 setMedia`() = runTest(timeout = 20.seconds) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val engine = RecordingEngine()
+        val urlA = "http://old.example/720p.m3u8"
+        val urlB = "http://old.example/480p.m3u8"
+        val gateA = CompletableDeferred<Unit>()
+        val probe: suspend (String) -> HlsUtil.ReachResult = { url ->
+            if (url == urlA) {
+                try {
+                    gateA.await()
+                } catch (e: CancellationException) {
+                    // 模拟不响应取消的旧探测：即使恢复执行，结果也必须被代际检查丢弃
+                }
+                failProbe()
+            } else {
+                okProbe()
+            }
+        }
+        val vm = newVm(engine, probe)
+        vm.attachEngine()
+
+        try {
+            vm.applyQuality(urlA)
+            runCurrent()
+            // A 仍挂在探测上，用户立刻改选 B
+            vm.applyQuality(urlB)
+            runCurrent()
+
+            // 旧探测此刻才返回（且失败）——不得回退、不得覆盖新选择
+            gateA.complete(Unit)
+            runCurrent()
+
+            assertEquals(
+                listOf(urlB),
+                engine.setMediaCalls.map { it.first },
+                "只允许对最后一次点击的档位 setMedia，旧探测结果必须丢弃",
+            )
+            assertEquals(urlB, vm.state.selectedVariant, "旧探测失败不得覆盖新选择")
+            assertEquals("", vm.state.errMsg, "旧探测失败不得写错误态")
+        } finally {
+            vm.stopProgressLoopForTest()
+        }
+    }
+
+    @Test
+    fun `onCleared 后引擎监听器为 0 且不再响应回调`() = runTest(timeout = 20.seconds) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val engine = RecordingEngine()
+        val vm = newVm(engine) { okProbe() }
+        vm.attachEngine()
+
+        try {
+            assertEquals(1, engine.listeners.size)
+            vm.clearForTest()
+            assertEquals(0, engine.listeners.size, "onCleared 必须注销监听器（B-7）")
+
+            engine.emitPlaying()
+            assertFalse(vm.state.isPlaying, "已清理的 VM 不得再被引擎回调改状态")
+        } finally {
+            vm.stopProgressLoopForTest()
+        }
+    }
+
+    // ------------------------------------------------------------------ 会话进度
+
+    @Test
+    fun `同一集换档不重置会话进度`() = runTest(timeout = 20.seconds) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        PlaybackSession.play(
+            repo = SourceRepository(),
+            rawUrl = "http://old.example/ep0.m3u8",
+            title = "测试影片",
+            vodName = "测试影片",
+            vodId = 7L,
+            source = "test-source",
+            vodUri = "",
+            episodeIndex = 0,
+            episodeName = "第1集",
+            preResolved = "http://old.example/ep0.m3u8",
+            startAtMs = 30_000L,
+        )
+        assertEquals(30_000L, PlaybackSession.currentState().curTime, "起播位置应写入会话")
+
+        // 换清晰度：同一集（vodId+source+episodeIndex 相同），只换 url
+        PlaybackSession.registerPlayback(
+            url = "http://old.example/ep0-1080p.m3u8",
+            headers = "",
+            title = "测试影片",
+            vodName = "测试影片",
+            vodId = 7L,
+            source = "test-source",
+            vodUri = "",
+            episodeIndex = 0,
+            episodeName = "第1集",
+        )
+
+        assertEquals(
+            30_000L,
+            PlaybackSession.currentState().curTime,
+            "换档只换 url，不得把同一集进度归零",
+        )
+        runCurrent()
     }
 
     // ------------------------------------------------------------------ 脚手架

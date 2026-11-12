@@ -336,9 +336,13 @@ object PlaybackSession {
         val cur = _state.value
         // 与 play() 同一口径：换集/换片/换源要把进度归零。全屏页换集后回到
         // 详情页，内嵌位读的是会话状态；不清的话会先画出上一集的进度。
-        // 同一集（进/退全屏的重复登记）保持原值——那条路径位置本就连续。
-        val switchingEpisode = !cur.hasSession || cur.url != url ||
-            cur.vodId != vodId || cur.source != source || cur.episodeIndex != episodeIndex
+        //
+        // 【不能用 url 不同判定换集】换清晰度也会换 url，但集身份没变：
+        // 按 url 判会把 curTime/totalTime 归零，切换瞬间（尤其暂停态或立即
+        // 返回详情页）把保留进度读成 0。集身份 = (vodId, source, episodeIndex)。
+        val sameEpisode = cur.hasSession &&
+            cur.vodId == vodId && cur.source == source && cur.episodeIndex == episodeIndex
+        val switchingEpisode = !sameEpisode
         _state.value = cur.copy(
             url = url,
             headers = headers,
