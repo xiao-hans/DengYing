@@ -233,6 +233,49 @@ object DyIcons {
     val StarOutline: DyIcon = icon { p -> p.stroke(starPath(), 2f) }
 
     /** 关闭 / 删除单条：45° 十字 */
+    /** 眼睛睁开：密码明文状态。圆 + 中心瞳孔 + 上下眼睑弧 */
+    val Eye: DyIcon = icon { p ->
+        p.ring(12f, 12f, 3.2f, 1.8f)
+        p.circle(12f, 12f, 1.5f)
+        p.stroke(
+            Path().apply {
+                moveTo(2.5f, 12f)
+                cubicTo(5f, 7f, 8.5f, 5f, 12f, 5f)
+                cubicTo(15.5f, 5f, 19f, 7f, 21.5f, 12f)
+                cubicTo(19f, 17f, 15.5f, 19f, 12f, 19f)
+                cubicTo(8.5f, 19f, 5f, 17f, 2.5f, 12f)
+            },
+            1.8f,
+        )
+    }
+
+    /** 眼睛闭上：密码隐藏状态。眼形上加一道斜线 */
+    val EyeOff: DyIcon = icon { p ->
+        p.stroke(
+            Path().apply {
+                moveTo(3f, 8.5f)
+                cubicTo(6f, 6.5f, 9f, 5.5f, 12f, 5.5f)
+                cubicTo(15f, 5.5f, 18f, 6.5f, 21f, 8.5f)
+            },
+            1.8f,
+        )
+        p.stroke(
+            Path().apply {
+                moveTo(4f, 13.5f)
+                cubicTo(7f, 16.5f, 9.5f, 18f, 12f, 18f)
+                cubicTo(14.5f, 18f, 17f, 16.5f, 20f, 13.5f)
+            },
+            1.8f,
+        )
+        p.stroke(
+            Path().apply {
+                moveTo(4f, 19f)
+                lineTo(20f, 5f)
+            },
+            1.8f,
+        )
+    }
+
     val Close: DyIcon = icon { p ->
         p.stroke(
             Path().apply {

@@ -245,7 +245,10 @@ class PlayerViewModel(
      */
     fun resolveUrl() {
         viewModelScope.launch {
-            val raw = params.url
+            val raw = currentUrl
+            // 换集：当前地址来自 epUrls（源站令牌/分享页），路由带来的 headersJson
+            // 属于上一集，不能再当作「已解析」的依据
+            val switching = currentUrl != params.url
             // 【FR-705 已解析地址直接起播】内嵌态切全屏时带来 `headersJson`，
             // 或地址本身已不是分享页 → **整段解析链跳过**。
             //
@@ -274,13 +277,17 @@ class PlayerViewModel(
                 state = state.copy(errMsg = "该源暂不可播：${src.playGap}", status = "")
                 return@launch
             }
-            val tokenNeedsSwap = src != null && capsOf(src).token && params.headersJson.isEmpty()
-            val alreadyResolved = !tokenNeedsSwap &&
-                (params.headersJson.isNotEmpty() || !HlsUtil.isSharePage(raw))
+            val tokenNeedsSwap = src != null && capsOf(src).token &&
+                (switching || params.headersJson.isEmpty())
+            val alreadyResolved = !tokenNeedsSwap && (
+                (!switching && params.headersJson.isNotEmpty()) ||
+                    !HlsUtil.isSharePage(raw)
+                )
             if (alreadyResolved) {
                 PlaybackProbe.note(
                     "resolve-skip-already-resolved",
-                    "headers=${params.headersJson.isNotEmpty()} isShare=${HlsUtil.isSharePage(raw)} len=${raw.length}",
+                    "switching=$switching headers=${params.headersJson.isNotEmpty()} " +
+                        "isShare=${HlsUtil.isSharePage(raw)} len=${raw.length}",
                 )
                 val gate0 = guardUrl(raw)
                 if (!gate0.allowed) {
@@ -288,7 +295,8 @@ class PlayerViewModel(
                     return@launch
                 }
                 resolvedUrl = raw
-                resolvedHeaders = params.headersJson
+                // 换集后路由请求头属于上一集，不能沿用到新地址
+                resolvedHeaders = if (switching) "" else params.headersJson
                 startedUrl = ""
                 urlReady = true
                 state = state.copy(status = "正在准备…")
@@ -302,7 +310,8 @@ class PlayerViewModel(
             }
 
             com.dengying.player.player.PlaybackProbe.note(
-                "resolve-enter", "len=${raw.length} source=${params.source} vodId=${params.vodId}"
+                "resolve-enter",
+                "len=${raw.length} source=${params.source} vodId=${params.vodId} switching=$switching",
             )
             // SEC-005 第一道闸：路由参数里的**真实 URL**先校验，未过的**不进入网络层**。
             // token 载荷（Base64 令牌）在此处必然 RejectScheme，不适用本闸——
@@ -330,6 +339,11 @@ class PlayerViewModel(
             if (src != null && capsOf(src).token) {
                 try {
                     val r = repo.resolveSourcePlay(src, params.vodId, raw, params.lineFrom)
+                    PlaybackProbe.note(
+                        "token-swap",
+                        "src=${src.key} inLen=${raw.length} outLen=${r.url.length} " +
+                            "headers=${r.headers.isNotEmpty()} preview=${r.previewOnly}",
+                    )
                     if (r.url.isNotEmpty()) {
                         // SEC-005 第二道闸：适配器换出的地址同样要过校验
                         val g2 = guardUrl(r.url)
@@ -348,6 +362,20 @@ class PlayerViewModel(
                     }
                 } catch (e: Exception) {
                     Log.w("DY/Player", "source resolve ${src.key} failed")
+                }
+                // 换链跑完 resolvedUrl 仍是令牌（非 http 地址）= 该集在源站解析失败。
+                // 真机实录（2026-11-12）：tv189 个别集 authPlayVod 返回空 videos，令牌被
+                // 原样交给引擎 → code=2001 Source error 无限「网络抖动，正在重试…」。
+                // 这里不把令牌交给引擎：先自动换线，换不到再给可行动的提示。
+                if (!resolvedUrl.startsWith("http")) {
+                    PlaybackProbe.note("token-swap-empty", "src=${src.key} inLen=${raw.length}")
+                    state = state.copy(status = "正在寻找可用线路…")
+                    if (autoSwitchLine()) return@launch
+                    state = state.copy(
+                        status = "",
+                        errMsg = "该集在当前线路解析失败，请换条线路或稍后重试",
+                    )
+                    return@launch
                 }
             }
 
@@ -599,7 +627,7 @@ class PlayerViewModel(
         val cur = CmsSources.byKey(params.source)
         val sameSrcToken = cur != null && capsOf(cur).token
         for (u in params.altUrls) {
-            if (u.isEmpty() || u == params.url) continue
+            if (u.isEmpty() || u == currentUrl) continue
             if (sameSrcToken && cur != null) {
                 val r = repo.resolveSourcePlay(cur, params.vodId, u, params.lineFrom)
                 if (r.url.isNotEmpty()) candidates += r.url
@@ -615,7 +643,7 @@ class PlayerViewModel(
             val alts = repo.findAltSources(repo.allSources(), params.source, vodName)
             for (alt in alts) {
                 val src = CmsSources.byKey(alt.sourceKey) ?: continue
-                val u = repo.fetchAltPlayUrl(src, alt.vodId, params.episodeIndex)
+                val u = repo.fetchAltPlayUrl(src, alt.vodId, state.curEpIndex)
                 if (u.isNotEmpty()) candidates += u
             }
         }
@@ -860,13 +888,13 @@ class PlayerViewModel(
                 com.dengying.player.playback.PlaybackSession.registerPlayback(
                     url = resolvedUrl,
                     headers = resolvedHeaders,
-                    title = params.title,
+                    title = state.title,
                     vodName = params.vodName,
                     vodId = params.vodId,
                     source = params.source,
                     vodUri = params.vodUri,
-                    episodeIndex = params.episodeIndex,
-                    episodeName = params.episodeName,
+                    episodeIndex = state.curEpIndex,
+                    episodeName = currentEpName,
                 )
             } catch (e: Exception) {
                 PlaybackProbe.note("startEngine-exception", "${e::class.simpleName ?: "Exception"}: ${e.message?.take(120)}")
@@ -885,6 +913,28 @@ class PlayerViewModel(
      */
     private var startedUrl: String = ""
 
+    // ---------------- 当前集三元组（FR-415：换集后不得沿用路由初值） ----------------
+
+    /**
+     * 当前集的「解析入口地址」。
+     *
+     * 初值是路由地址（本页首集）；换集后必须换成 `epUrls[target]`——[resolveUrl]
+     * 此前恒定从 `params.url` 解析，换集表现为「标题变了、画面还是上一集」
+     * （2026-11-12 真机：连点两次下一集，探针里 resolve/startEngine 的地址始终 845 字符不变）。
+     * tv189 这类 token 源的 `ep.url` 是 `C<contentId>` 换链令牌（9 字符），
+     * 换集后走 [resolveUrl] 的 token 分支由源适配器换出真实媒体地址。
+     */
+    private var currentUrl: String = params.url
+
+    /** 当前集名：会话登记 / 历史落盘 / 标题都用它，换集后不再等于 `params.episodeName` */
+    private var currentEpName: String = params.episodeName
+
+    /** 当前集的显式起播位置：首集=路由 startAtMs，换集后=0（新集从头播） */
+    private var epStartAtMs: Long = params.startAtMs
+
+    /** 换集后置 true：本次起播由用户显式换集触发，不读历史续播点（历史按影片存，不分集） */
+    private var resumeSuppressed: Boolean = false
+
     /** 供视图挂载后调用：引擎就绪即尝试起播 */
     fun onEngineAttached() {
         if (urlReady) startEngine()
@@ -901,23 +951,28 @@ class PlayerViewModel(
      * 分两步的理由：历史续播点要读盘（IO），不该阻塞 `setMedia`；
      * 而 `startAtMs` 是现成的值，直接交给 `setMedia` 可以让首帧就落在正确位置。
      */
-    private fun resumePositionOrZero(): Long = params.startAtMs
+    private fun resumePositionOrZero(): Long = epStartAtMs
 
     private fun restorePosition() {
         // 【先落探针再判早退】真机“手动 seek 后画面又被拉回去”就是从这里发生的。
         // 早期只记“实际 seek 了”的分支，所以看不出到底是“守卫没生效”
         // 还是“根本走不到这里”。把早退原因写进去。
-        val load = ResumeRestore.shouldLoad(
-            startAtMs = params.startAtMs,
-            vodId = params.vodId,
-            source = params.source,
-            alreadyRequested = resumeRestoreRequested,
-        )
+        val load = if (resumeSuppressed) {
+            // 换集：历史续播点按 vodId+source 存、不分集，套用到新集就是把上一集的位置拉过来
+            ResumeRestore.Load(false, "episode-switch")
+        } else {
+            ResumeRestore.shouldLoad(
+                startAtMs = epStartAtMs,
+                vodId = params.vodId,
+                source = params.source,
+                alreadyRequested = resumeRestoreRequested,
+            )
+        }
         PlaybackProbe.note(
             "resume-restore-check",
-            "startAtMs=${params.startAtMs} vodId=${params.vodId} source=${params.source} " +
+            "startAtMs=$epStartAtMs vodId=${params.vodId} source=${params.source} " +
                 "requested=$resumeRestoreRequested manualSeek=$manualSeekOccurred " +
-                "load=${load.shouldLoad} why=${load.reason}",
+                "suppressed=$resumeSuppressed load=${load.shouldLoad} why=${load.reason}",
         )
         // 显式指定了起播位置时不再用历史值覆盖——那会让用户“跳回上次看到的地方”，
         // 而不是“接着刚才的位置播”
@@ -944,7 +999,7 @@ class PlayerViewModel(
             source = params.source,
             vod_uri = params.vodUri,
             episodeIndex = state.curEpIndex,
-            episodeName = params.episodeName,
+            episodeName = currentEpName,
             position = state.curTime,
             duration = state.totalTime,
             updateTime = Clock.nowMs(),
@@ -1177,6 +1232,11 @@ class PlayerViewModel(
         // 用户显式换集：重置换线标志，给他一条明确的恢复路径
         switchTried = false
         val target = state.curEpIndex + offset
+        // 目标集地址缺失：不动引擎，只给可行动提示（空地址交给解析链会被当成本片兜底）
+        if (params.epUrls.getOrNull(target).isNullOrEmpty()) {
+            state = state.copy(errMsg = "该集地址缺失，请换条线路试试", status = "")
+            return
+        }
         viewModelScope.launch {
             persistHistory()
             // 显式保证主线程：ExoPlayer 的 API 全部要求主线程（真机踩过 wrong-thread 异常）
@@ -1185,7 +1245,14 @@ class PlayerViewModel(
             starting = false
             urlReady = false
 
+            val epUrl = params.epUrls[target]
             val epName = params.epNames.getOrElse(target) { "" }
+            // 【当前集三元组】resolveUrl 从 currentUrl 解析；不更新它就会重播上一集
+            // （2026-11-12 真机：换集后探针里地址恒为 845 字符、ep 序号不变）
+            currentUrl = epUrl
+            currentEpName = epName
+            epStartAtMs = 0
+            resumeSuppressed = true
             state = state.copy(
                 errMsg = "",
                 prepared = false,
@@ -1195,7 +1262,7 @@ class PlayerViewModel(
                 title = if (params.vodName.isNotEmpty()) "${params.vodName} $epName" else epName,
                 buffering = false,
             )
-            resolvedUrl = params.epUrls.getOrElse(target) { "" }
+            resolvedUrl = epUrl
             resolvedHeaders = ""
             pendingResumeMs = 0
             resumeRestoreRequested = false
@@ -1295,7 +1362,7 @@ class PlayerViewModel(
                 source = params.source,
                 vod_uri = params.vodUri,
                 episodeIndex = snap.curEpIndex,
-                episodeName = params.episodeName,
+                episodeName = currentEpName,
                 position = pos,
                 duration = snap.totalTime,
                 updateTime = Clock.nowMs(),

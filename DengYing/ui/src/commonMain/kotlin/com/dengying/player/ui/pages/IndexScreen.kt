@@ -87,7 +87,6 @@ import com.dengying.player.ui.components.LoadingView
 import com.dengying.player.ui.components.Poster
 import com.dengying.player.ui.components.GlassPage
 import com.dengying.player.ui.components.GlassPullIndicator
-import com.dengying.player.ui.components.InlineNotice
 import com.dengying.player.ui.navigation.Routes
 import com.dengying.player.ui.theme.Glass
 import com.dengying.player.ui.theme.Palette
@@ -198,6 +197,11 @@ fun IndexScreen(
     }
     val pagerState = androidx.compose.foundation.pager.rememberPagerState { 4 }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // 首页下拉刷新的转圈要画在玻璃顶栏之上，而顶栏在 GlassPage 的 overlay 层，
+    // 所以 state 提到外层，由首页那一页的下拉手势写入、overlay 读取。
+    // 必须在这里 remember：手势只会更新它拿到的那一个 state，换一个实例 overlay 就永远读到 0。
+    val homePullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    var homePullRefreshing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // 【Pager → 数据】滑停之后按窗格触发加载：
     // 首页吃推荐槽位(0)，分类/发现各自吃所选分类槽位，我的不拉数据。
     LaunchedEffect(pagerState.settledPage) {
@@ -289,26 +293,16 @@ fun IndexScreen(
                             savedScroll[0] = it
                         }
                     }
-                    // 【v5 下拉刷新】自定义玻璃 indicator，放在顶栏**下方**：
-                    // 默认 Indicator 由 PullToRefreshBox 摆在 Box 顶部并从屏幕外
-                    // 滑入，正好被玻璃顶栏挡住/压在其上（用户实测否决）。
-                    // 这里显式给 indicator 插槽，用 topPadding 把转圈推到顶栏下面。
-                    val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+                    // 【下拉刷新】转圈不画在这里。内容层在 GlassPage 的采样层里，
+                    // 玻璃顶栏是浮在它之上的 overlay，转圈画在内容层会被顶栏整个盖住
+                    // （用户实测：下拉时看不见转圈）。手势写入外层那一个 state，转圈画进 overlay。
+                    homePullRefreshing = cs.refining
                     androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                         isRefreshing = cs.refining,
                         onRefresh = { vm.refresh(0) },
-                        state = pullState,
+                        state = homePullState,
                         modifier = Modifier.fillMaxSize(),
-                        indicator = {
-                            GlassPullIndicator(
-                                state = pullState,
-                                isRefreshing = cs.refining,
-                                modifier = Modifier
-                                    .align(Alignment.TopCenter)
-                                    // 顶栏高度（状态栏 + 44dp 胶囊 + 上下边距）再留 8dp 间隙
-                                    .padding(top = topPad + 8.dp),
-                            )
-                        },
+                        indicator = {},
                     ) {
                         RecommendPage(
                             cs = cs,
@@ -317,8 +311,6 @@ fun IndexScreen(
                             onOpenDetail = onOpenDetail,
                             onRetry = { vm.loadData(0) },
                             state = listState,
-                            notice = cs.notice,
-                            onNoticeShown = { vm.dismissNotice(0) },
                         )
                     }
                 }
@@ -466,6 +458,18 @@ fun IndexScreen(
             },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+        // 首页下拉刷新的转圈：必须在 overlay 层，否则被玻璃顶栏盖住看不见。
+        // 只在首页显示，顶栏正下方居中。
+        if (pagerState.targetPage == 0) {
+            GlassPullIndicator(
+                state = homePullState,
+                isRefreshing = homePullRefreshing,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(top = 56.dp + 8.dp),
+            )
+        }
         },
     )
 }
@@ -490,17 +494,7 @@ private fun RecommendPage(
     onOpenDetail: (String) -> Unit,
     onRetry: () -> Unit,
     state: androidx.compose.foundation.lazy.LazyListState,
-    /** 一次性反馈（"已刷新 · N 个内容"），空串不显示 */
-    notice: String,
-    onNoticeShown: () -> Unit,
 ) {
-    // 提示条出现 2.6s 后自动消失（不用 Snackbar：首页底部被 Dock 占满）
-    if (notice.isNotEmpty()) {
-        LaunchedEffect(notice) {
-            kotlinx.coroutines.delay(2600)
-            onNoticeShown()
-        }
-    }
     when {
         // 首拉中：占位避免闪空
         cs.loading && cs.sections.isEmpty() -> LoadingView()
@@ -544,18 +538,6 @@ private fun RecommendPage(
                         onOpenDetail = onOpenDetail,
                     )
                 }
-            }
-            // 刷新反馈条：浮在顶栏正下方，不随列表滚动。
-            // 源站常返回同一批内容，界面无变化会被当成「刷新没生效」；
-            // 放进 LazyColumn 当 item 会被顶部 padding 顶到玻璃顶栏背后（实测），
-            // 所以改成独立浮层。
-            if (notice.isNotEmpty()) {
-                InlineNotice(
-                    text = notice,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = topPadding + 8.dp),
-                )
             }
         }
     }

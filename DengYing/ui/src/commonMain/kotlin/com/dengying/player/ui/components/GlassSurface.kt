@@ -152,7 +152,10 @@ fun GlassSurface(
                         drawLayer(sampleLayer)
                         // 3) tint 补可读性（v3 大幅调低，透射为主）
                         drawOutline(outline, color = tint, style = Fill)
-                        // 4) 高光描边：左上亮右下暗，玻璃"厚度"的镜面反光
+                        // 4) 实色描边：高光描边是 55% 白，压在浅色键盘/浅底上完全消失。
+                        //    先画一圈主题边线，保证任何底色下都能看出轮廓。
+                        drawOutline(outline, color = borderC, style = Stroke(edge))
+                        // 5) 高光描边：左上亮右下暗，玻璃"厚度"的镜面反光
                         drawOutline(outline, brush = specular, style = Stroke(edge))
                         // 5) 内容最后画（浮在玻璃面上）
                         drawContent()

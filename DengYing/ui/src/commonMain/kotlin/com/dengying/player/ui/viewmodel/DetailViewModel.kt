@@ -85,6 +85,14 @@ class DetailViewModel(
         val epNotice: String = "",
         val epShowGrid: Boolean = true,
         val lastHistory: HistoryItem? = null,
+        /**
+         * 会话正在播（或正在解析/缓冲）的**真实集序号**；-1 = 本片没有在播的集。
+         *
+         * 【为什么要有】选集网格原先只高亮 [isResumeEp]（历史续播点，进页时读一次），
+         * 用户点集内嵌播放后没有任何选中态——"点了哪一集"在 UI 上不可见。
+         * 由 init 里的会话 collect 维护，且校验 vodId+source 属于本片，防串台。
+         */
+        val playingEp: Int = -1,
     )
 
     var state by mutableStateOf(UiState())
@@ -135,7 +143,15 @@ class DetailViewModel(
             com.dengying.player.playback.PlaybackSession.state.collect { s ->
                 // 只在本页显示会话（hasSession 且标题匹配本片）时同步，
                 // 避免别的片的会话串到本页内嵌位
-                if (!s.hasSession) return@collect
+                if (!s.hasSession) {
+                    // 会话结束/换片：清掉"正在播"高亮，否则网格会一直亮着上一部片的集
+                    if (state.playingEp != -1) state = state.copy(playingEp = -1)
+                    return@collect
+                }
+                // 选中态只认本片的会话（vodId+source 双校验）。
+                // 每秒都有进度帧，必须带变化判断，否则整页每秒重组一次。
+                val playingEp = if (s.vodId == curVodId && s.source == curSource) s.episodeIndex else -1
+                if (state.playingEp != playingEp) state = state.copy(playingEp = playingEp)
                 inlineState = inlineState.copy(
                     active = true,
                     title = s.title,
@@ -604,6 +620,34 @@ class DetailViewModel(
     }
 
     /**
+     * 内嵌位是否存在 offset 方向的相邻集（offset=-1 上一集 / +1 下一集）。
+     *
+     * 会话的 [PlaybackSession.State.episodeIndex] 是 `currentEps()` 的真实下标，
+     * 与全屏页 `hasEp()` 同一口径；没有会话时一律不可切。
+     */
+    fun inlineHasEp(offset: Int): Boolean {
+        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        if (!s.hasSession) return false
+        val idx = s.episodeIndex + offset
+        return idx in currentEps().indices
+    }
+
+    /**
+     * 内嵌态切上/下一集（用户反馈"没有上下集按钮功能"的修法）。
+     *
+     * 与点网格走同一个 [playInline] 入口：解析/换集全在会话内，内嵌位只是
+     * 视图宿主。越界不动作（按钮已置灰，这里再守一道，防无障碍/手势通道越界）。
+     */
+    fun inlineSwitchEpisode(offset: Int) {
+        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        if (!s.hasSession) return
+        val target = s.episodeIndex + offset
+        if (target !in currentEps().indices) return
+        PlaybackProbe.note("inline-switch-ep", "from=${s.episodeIndex} offset=$offset to=$target")
+        playInline(target)
+    }
+
+    /**
      * 内嵌播放的地址解析：分享页 → m3u8；token 型源先换链。
      *
      * @return (最终地址, 请求头 JSON)；解析失败返回 null
@@ -830,6 +874,17 @@ class DetailViewModel(
             "inline-to-fullscreen",
             "pos=${s.curTime} headers=${s.headers.isNotEmpty()} ep=${s.episodeIndex}",
         )
+        // 【全屏页的上下集依赖这两张表】此前传 emptyList：全屏页 `hasEp()` 恒 false，
+        // 上/下集按钮常年禁用（用户反馈"没有上下集按钮功能"）。会话的 episodeIndex
+        // 就是 currentEps() 的真实下标，两张表与之一一对应。
+        val eps = currentEps()
+        // 同源其他线路的候选（与 playEpisode 同一口径）
+        val altUrls = ArrayList<String>()
+        state.lines.forEachIndexed { li, line ->
+            if (li != state.lineIdx && line.episodes.size > s.episodeIndex) {
+                altUrls += line.episodes[s.episodeIndex].url
+            }
+        }
         pendingPlayerRoute = Routes.player(
             url = s.url,
             title = s.title,
@@ -841,9 +896,9 @@ class DetailViewModel(
             lineFrom = state.lines.getOrNull(state.lineIdx)?.name ?: "",
             episodeIndex = s.episodeIndex,
             episodeName = s.episodeName,
-            altUrls = emptyList(),
-            epUrls = emptyList(),
-            epNames = emptyList(),
+            altUrls = altUrls,
+            epUrls = eps.map { e -> e.url },
+            epNames = eps.map { e -> e.name },
             // 【必须带起播位置与请求头】真机实测：漏传这两个参数的后果是
             //   [inline-to-fullscreen] pos=3271638   ← 内嵌位已经播到 54:31
             //   [engine-seek] target=3271638         ← 用户手动 seek

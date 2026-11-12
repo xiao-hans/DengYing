@@ -32,6 +32,16 @@ data class GlassScheme(
     val liquidTint: Color,
     /** 玻璃边线 */
     val border: Color,
+    /**
+     * 主按钮（登录 / 搜索）的填充。
+     *
+     * 与 [fill] 分开是因为主按钮叠在同样是玻璃的输入框上：两边都用 60% 白时，
+     * 实测只差 1~2 个色阶，按钮轮廓完全消失。主按钮要近实底（浅色近白、深色亮一档），
+     * 靠描边与投影跟输入框拉开，而不是靠染色。
+     */
+    val actionFill: Color,
+    /** 主按钮上的文字色：与 [actionFill] 成对，保证对比度 */
+    val actionText: Color,
     /** 悬浮投影颜色——配合 GlassSurface 的 elevation */
     val shadow: Color,
     /** chip/按钮 未选中填充 */
@@ -65,7 +75,12 @@ val LightGlass = GlassScheme(
     // 55% 以上背后只剩一片白雾（不要很模糊）。40% 是「能看出这里有一张图、
     // 但读不清图上的字」的分界，正对 vivo 系统组件的磨砂厚度。
     liquidTint = Color(0x66FFFFFF),
-    border = Color(0x240C0C09),
+    // 边线 14% 黑在近白底上只差 5 个色阶，真机上看不出边界。
+    // 提到 28% 后，输入框与卡片在 rgb(246) 的底上有一条可辨的灰线。
+    border = Color(0x6E0C0C09),
+    // 主按钮近白实底：输入框是 60% 白玻璃，按钮必须再实一档才有轮廓
+    actionFill = Color(0xF2FFFFFF),
+    actionText = Color(0xFF0C0C09),
     shadow = Color(0x1A0C0C09),
     chipFill = Color(0x5CFFFFFF),
     chipSelectedFill = Color(0xCCFFFFFF),
@@ -85,6 +100,9 @@ val DarkGlass = GlassScheme(
     darkFill = Color(0x73000000),
     liquidTint = Color(0x1CFFFFFF),
     border = Color(0x3DFFFFFF),
+    // 主按钮亮一档：深色输入框只有 11% 白，按钮用 24% 白才看得见边界
+    actionFill = Color(0x3DFFFFFF),
+    actionText = Color(0xFFF2F2EE),
     shadow = Color(0x66000000),
     chipFill = Color(0x2EFFFFFF),
     chipSelectedFill = Color(0x52FFFFFF),
@@ -102,6 +120,8 @@ object Glass {
     val DarkFill: Color @Composable get() = LocalGlassScheme.current.darkFill
     val LiquidTint: Color @Composable get() = LocalGlassScheme.current.liquidTint
     val Border: Color @Composable get() = LocalGlassScheme.current.border
+    val ActionFill: Color @Composable get() = LocalGlassScheme.current.actionFill
+    val ActionText: Color @Composable get() = LocalGlassScheme.current.actionText
     val Shadow: Color @Composable get() = LocalGlassScheme.current.shadow
     val ChipFill: Color @Composable get() = LocalGlassScheme.current.chipFill
     val ChipSelectedFill: Color @Composable get() = LocalGlassScheme.current.chipSelectedFill

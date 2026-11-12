@@ -163,7 +163,7 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                     password = !showPassword,
                     imeAction = ImeAction.Done,
-                    trailingText = if (showPassword) "隐藏" else "显示",
+                    trailingIcon = if (showPassword) DyIcons.EyeOff else DyIcons.Eye,
                     onTrailingClick = { showPassword = !showPassword },
                 )
                 if (feedback.isNotEmpty()) {

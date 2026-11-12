@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.dengying.player.ui.account.AhAuth
+import com.dengying.player.ui.components.DyIcons
 import com.dengying.player.ui.components.GlassBackButton
 import com.dengying.player.ui.components.GlassTextField
 import com.dengying.player.ui.components.GlassActionButton
@@ -122,7 +123,7 @@ fun RegisterScreen(
                     password = !showPassword,
                     keyboardType = KeyboardType.Password,
                     imeAction = ImeAction.Next,
-                    trailingText = if (showPassword) "隐藏" else "显示",
+                    trailingIcon = if (showPassword) DyIcons.EyeOff else DyIcons.Eye,
                     onTrailingClick = { showPassword = !showPassword },
                 )
                 Spacer(Modifier.height(10.dp))

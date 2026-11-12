@@ -91,21 +91,19 @@ private class PageGlow(
 )
 
 /**
- * 配色定稿（v5「磨砂」口径）。
+ * 配色定稿（v1.3.1，对齐 vivo OriginOS 5）。
  *
- * 【为什么不用"低 alpha 的深色"】v4 的做法是深色（品牌靛蓝 #312C85）配
- * 0.10~0.34 的 alpha。深色混白不是"淡色"，是**灰**——实测截屏取色，
- * 四角与中心全是 rgb(212~219) 的中性灰，屏幕上看不出任何色相，
- * 观感就是"发灰的白底"（用户：审美再好一点）。
+ * v1.3.0 用了四支粉彩（淡紫 / 杏 / 薄荷 / 樱粉）冷暖对位，屏幕上是一块块
+ * 可辨的色斑，用户反馈「有点 low」。OriginOS 的底色恰恰相反：
  *
- * 【正解：浅色相 + 中等 alpha】要"白里透一点颜色"，颜料本身必须是浅的
- * （亮度 0.7~0.85 的粉彩），否则叠多少层都是灰。浅紫 #B9AEFF 在 50% 下
- * 与米白混出 rgb(221,217,249)，一眼能看出是淡紫；同样的位置换成深靛蓝
- * 20% 只能得到 rgb(219,218,219) 的灰。
+ * - 浅色：近白底（`#F6F6F6` 一带），只有极淡的冷灰蓝从顶部渗下来，
+ *   几乎看不出颜色，层次全靠玻璃件自己的明暗，不靠底色染色。
+ * - 深色：纯黑底（`#000000`），不铺任何彩色光。深色下彩色光会把黑底
+ *   染成紫雾，OriginOS 深色是干净的黑，层次靠卡片比底色亮一档来做。
  *
- * 四色仍是冷暖对位（紫→杏→薄荷→粉），只是全部换成粉彩，并且 alpha 提到
- * 0.30~0.50 让色相真的存在。玻璃件压上去后 12dp 模糊再柔化一次，
- * 得到的是 vivo 系统组件那种「一片有方向的淡彩空气」，不是灰雾。
+ * 【为什么浅色仍留一团极淡的光】纯平铺底色会让玻璃采样到一片死色，
+ * 透射感消失（v1.2.8 的教训）。一团冷灰蓝、alpha 压到 0.10，
+ * 只给玻璃里一点方向，肉眼几乎分辨不出是哪支颜色。
  */
 @Composable
 private fun rememberPageGlow(): PageGlow {
@@ -113,27 +111,26 @@ private fun rememberPageGlow(): PageGlow {
     // 深色判定跟着主题走：appBg 的亮度足够区分两套主题（0.90 vs 0.006）
     val dark = bg.luminance() < 0.4f
     return if (dark) {
+        // OriginOS 深色：纯黑底，不铺彩色光。层次靠卡片比底色亮一档，不靠染色
         PageGlow(
-            bg = bg,
-            // 深色底上粉彩会被吃掉，必须用中深饱和色；亮度仍要够，否则玻璃一压全黑
-            primary = Color(0xFF5B52C9).copy(alpha = 0.55f),
-            accent = Color(0xFF8A5A2E).copy(alpha = 0.32f),
-            tertiary = Color(0xFF1F6E68).copy(alpha = 0.34f),
-            quaternary = Color(0xFF7A2F45).copy(alpha = 0.30f),
-            // 深色不需要顶部提亮，反而要压暗四角避免发灰
+            bg = Color(0xFF000000),
+            primary = Color.Transparent,
+            accent = Color.Transparent,
+            tertiary = Color.Transparent,
+            quaternary = Color.Transparent,
             topAir = Color.Transparent,
-            bottomShade = Color(0xFF000000).copy(alpha = 0.24f),
+            bottomShade = Color.Transparent,
         )
     } else {
+        // OriginOS 浅色：近白底 + 顶部极淡的冷灰蓝，几乎看不出颜色
         PageGlow(
-            bg = bg,
-            // 粉彩四色：淡紫 / 杏 / 薄荷 / 樱粉。亮度都在 0.75 以上，混进米白仍显色
-            primary = Color(0xFFB9AEFF).copy(alpha = 0.50f),
-            accent = Color(0xFFFFCBA8).copy(alpha = 0.42f),
-            tertiary = Color(0xFF9FE3DA).copy(alpha = 0.34f),
-            quaternary = Color(0xFFFFB3C8).copy(alpha = 0.30f),
-            topAir = Color.White.copy(alpha = 0.30f),
-            bottomShade = Color(0xFF8A8578).copy(alpha = 0.06f),
+            bg = Color(0xFFF6F6F6),
+            primary = Color(0xFFD6DCE6).copy(alpha = 0.10f),
+            accent = Color.Transparent,
+            tertiary = Color.Transparent,
+            quaternary = Color.Transparent,
+            topAir = Color.White.copy(alpha = 0.40f),
+            bottomShade = Color.Transparent,
         )
     }
 }
@@ -223,38 +220,43 @@ private fun DrawScope.drawPageGlow(glow: PageGlow) {
     val maxDim = if (w > h) w else h
 
     drawRect(glow.bg)
-    // ① 主色光：左上，最大最淡，定整体冷暖
-    drawRect(
-        Brush.radialGradient(
-            colors = listOf(glow.primary, Color.Transparent),
-            center = Offset(w * 0.10f, h * 0.02f),
-            radius = maxDim * 1.05f,
-        ),
-    )
-    // ② 副色光：右上，与主色冷暖对位
-    drawRect(
-        Brush.radialGradient(
-            colors = listOf(glow.accent, Color.Transparent),
-            center = Offset(w * 0.98f, h * 0.20f),
-            radius = maxDim * 1.00f,
-        ),
-    )
-    // ③ 第三色光：左下，压住下半屏避免整体发灰
-    drawRect(
-        Brush.radialGradient(
-            colors = listOf(glow.tertiary, Color.Transparent),
-            center = Offset(w * 0.00f, h * 0.72f),
-            radius = maxDim * 1.10f,
-        ),
-    )
-    // ④ 第四色光：右下，给 Dock 背后一点暖
-    drawRect(
-        Brush.radialGradient(
-            colors = listOf(glow.quaternary, Color.Transparent),
-            center = Offset(w * 0.92f, h * 1.02f),
-            radius = maxDim * 1.15f,
-        ),
-    )
+    // ① 主色光：左上，唯一的一团色。其余三团在单色口径下是 Color.Transparent，跳过
+    if (glow.primary != Color.Transparent) {
+        drawRect(
+            Brush.radialGradient(
+                colors = listOf(glow.primary, Color.Transparent),
+                center = Offset(w * 0.10f, h * 0.02f),
+                radius = maxDim * 1.05f,
+            ),
+        )
+    }
+    if (glow.accent != Color.Transparent) {
+        drawRect(
+            Brush.radialGradient(
+                colors = listOf(glow.accent, Color.Transparent),
+                center = Offset(w * 0.98f, h * 0.20f),
+                radius = maxDim * 1.00f,
+            ),
+        )
+    }
+    if (glow.tertiary != Color.Transparent) {
+        drawRect(
+            Brush.radialGradient(
+                colors = listOf(glow.tertiary, Color.Transparent),
+                center = Offset(w * 0.00f, h * 0.72f),
+                radius = maxDim * 1.10f,
+            ),
+        )
+    }
+    if (glow.quaternary != Color.Transparent) {
+        drawRect(
+            Brush.radialGradient(
+                colors = listOf(glow.quaternary, Color.Transparent),
+                center = Offset(w * 0.92f, h * 1.02f),
+                radius = maxDim * 1.15f,
+            ),
+        )
+    }
     // ⑤ 顶部薄白：只压顶栏区域，让玻璃顶栏有"光从上面来"的错觉
     if (glow.topAir != Color.Transparent) {
         drawRect(

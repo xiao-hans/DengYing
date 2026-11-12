@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -122,13 +123,19 @@ fun GlassClearButton(
                 interactionSource = MutableInteractionSource(),
                 onClick = onClick,
             ),
-        shape = CircleGlassShape,
+        // 【形状必须是圆角胶囊，不能是 CircleShape】宽度由内容撑开（图标 + 文字），
+        // 用 CircleShape 时圆按**短边**（44dp 高）画，横向再长就变成「圆里塞着
+        // 溢出的文字」——实测「清空」两个字直接戳出圆外。圆角半径取高度一半，
+        // 单图标时仍是一个正圆，带文字时自然变成胶囊。
+        shape = RoundedCornerShape(ControlSize / 2),
         fill = Glass.Fill,
         elevation = 6.dp,
         liquid = true,
     ) {
         Row(
-            modifier = Modifier.align(Alignment.Center),
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             DyIcon(
@@ -166,6 +173,8 @@ fun GlassTextField(
     focusRequester: FocusRequester? = null,
     trailingText: String? = null,
     onTrailingClick: (() -> Unit)? = null,
+    /** 尾部图标：与 [trailingText] 二选一，图标优先 */
+    trailingIcon: DyIcon? = null,
 ) {
     GlassSurface(
         modifier = modifier.height(48.dp),
@@ -207,19 +216,36 @@ fun GlassTextField(
                 unfocusedTextColor = Palette.TextPrimary,
             ),
             textStyle = MaterialTheme.typography.bodyMedium,
-            trailingIcon = if (trailingText != null && onTrailingClick != null) {
-                {
-                    Text(
-                        text = trailingText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Palette.TextSecondary,
-                        modifier = Modifier
-                            .clickable(onClick = onTrailingClick)
-                            .padding(horizontal = 10.dp),
-                    )
+            trailingIcon = when {
+                trailingIcon != null && onTrailingClick != null -> {
+                    {
+                        DyIcon(
+                            icon = trailingIcon,
+                            tint = Palette.TextSecondary,
+                            size = 20.dp,
+                            modifier = Modifier
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    onClick = onTrailingClick,
+                                )
+                                .padding(horizontal = 12.dp),
+                        )
+                    }
                 }
-            } else {
-                null
+                trailingText != null && onTrailingClick != null -> {
+                    {
+                        Text(
+                            text = trailingText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Palette.TextSecondary,
+                            modifier = Modifier
+                                .clickable(onClick = onTrailingClick)
+                                .padding(horizontal = 10.dp),
+                        )
+                    }
+                }
+                else -> null
             },
             modifier = Modifier
                 .matchParentSize()
@@ -231,8 +257,8 @@ fun GlassTextField(
 /**
  * 玻璃主按钮：搜索 / 登录 / 注册共用，48dp 与 [GlassTextField] 严格等高。
  *
- * v1.2.7 废除墨色实底（Palette.Brand），改为更实的玻璃面 + 半粗主文字；
- * 主按钮靠投影与描边浮起，文字仍用主色保证可读性。
+ * 面与输入框、清空按钮同一套透射玻璃（[Glass.Fill] + liquid），文字用主色。
+ * 不另做实色底：实色底在粉彩柔光上会变成一块不透的板，和旁边的输入框对不上。
  */
 @Composable
 fun GlassActionButton(
@@ -252,23 +278,25 @@ fun GlassActionButton(
                 onClick = onClick,
             ),
         shape = ControlShape,
-        fill = Glass.ChipSelectedFill,
+        // 主按钮用近实底：与输入框同为玻璃时，60% 白叠 60% 白只差 1~2 色阶，轮廓消失
+        fill = Glass.ActionFill,
         elevation = 8.dp,
-        liquid = true,
+        // 主按钮不走液态采样：采样后的模糊会把描边和投影一起柔掉，边界又没了
+        liquid = false,
     ) {
         Box(modifier = Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
             if (busy) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(20.dp),
                     strokeWidth = 2.dp,
-                    color = Palette.TextPrimary,
+                    color = Glass.ActionText,
                 )
             } else {
                 Text(
                     text = text,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
-                    color = Palette.TextPrimary,
+                    color = Glass.ActionText,
                 )
             }
         }

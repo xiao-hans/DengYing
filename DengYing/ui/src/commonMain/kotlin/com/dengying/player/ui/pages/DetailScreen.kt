@@ -235,8 +235,12 @@ fun DetailScreen(
                     //  - `!pageActive`：本页已不是栈顶（返回、切全屏、跳其它页）
                     // 后者在导航动作发生时立即成立，不依赖转场与生命周期时序。
                     hidden = vm.inlineState.hidden || !pageActive,
+                    canPrev = vm.inlineHasEp(-1),
+                    canNext = vm.inlineHasEp(1),
                     onTogglePlay = { vm.toggleInlinePlay() },
                     onSeek = { pos -> vm.seekInline(pos) },
+                    onPrev = { vm.inlineSwitchEpisode(-1) },
+                    onNext = { vm.inlineSwitchEpisode(1) },
                     onEnterFullscreen = { vm.toFullscreen() },
                     modifier = Modifier.background(Color.Black),
                 )
@@ -257,6 +261,7 @@ fun DetailScreen(
                         displayEps = vm.displayEps(),
                         realIndexOf = { vm.epRealIndex(it) },
                         isResumeEp = { vm.isResumeEp(it) },
+                        playingEp = s.playingEp,
                         // FR-705：点剧集**就地播放**（内嵌），不再跳页。
                         // 跳全屏播放页的入口改为内嵌位的全屏键（见上）。
                         onPlayEpisode = { vm.playInline(it) },
@@ -514,6 +519,8 @@ private fun EpisodeBlock(
     displayEps: List<Episode>,
     realIndexOf: (Int) -> Int,
     isResumeEp: (Int) -> Boolean,
+    /** 会话正在播的真实集序号（-1 = 无）。优先于历史续播点显示选中态。 */
+    playingEp: Int,
     onPlayEpisode: (Int) -> Unit,
 ) {
     GlassSurface(
@@ -636,7 +643,11 @@ private fun EpisodeBlock(
                             }
                             val ep = displayEps[displayIdx]
                             val real = realIndexOf(displayIdx)
-                            val resume = isResumeEp(real)
+                            // 【选中态】当前在播 > 历史续播点。此前只看续播点，
+                            // 点集后网格毫无反馈（用户反馈"选中剧集没有选中UI显示"）。
+                            val current = playingEp == real
+                            val resume = !current && isResumeEp(real)
+                            val selected = current || resume
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -644,7 +655,7 @@ private fun EpisodeBlock(
                                     // 更大的热区，同时也是对"点击没反应"的一次结构性改善
                                     .height(48.dp)
                                     .background(
-                                        if (resume) Palette.Brand else Palette.SearchBg,
+                                        if (selected) Palette.Brand else Palette.SearchBg,
                                         RoundedCornerShape(6.dp),
                                     )
                                     .clickable {
@@ -659,12 +670,12 @@ private fun EpisodeBlock(
                                 Text(
                                     text = ep.name,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (resume) Color.White else Palette.TextPrimary,
+                                    color = if (selected) Color.White else Palette.TextPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                // 「续」角标：上次看到的一集
-                                if (resume) {
+                                // 角标：当前在播「播」；否则历史续播点「续」
+                                if (selected) {
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopEnd)
@@ -674,7 +685,7 @@ private fun EpisodeBlock(
                                             ),
                                     ) {
                                         Text(
-                                            text = "续",
+                                            text = if (current) "播" else "续",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = Color.White,
                                             modifier = Modifier.padding(horizontal = 3.dp),

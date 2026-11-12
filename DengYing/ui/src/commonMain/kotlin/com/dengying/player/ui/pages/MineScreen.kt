@@ -1,5 +1,6 @@
 package com.dengying.player.ui.pages
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,16 +30,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.dengying.player.data.source.adapters.BttwoAuth
 import com.dengying.player.ui.UiDepsHolder
+import com.dengying.player.ui.account.AhAuth
 import com.dengying.player.ui.components.DyIcon
 import com.dengying.player.ui.components.DyIcons
 import com.dengying.player.ui.components.GlassChip
 import com.dengying.player.ui.components.GlassCircleButton
 import com.dengying.player.ui.components.GlassSurface
+import com.dengying.player.ui.components.PosterDecoder
+import com.dengying.player.ui.components.PosterFetch
 import com.dengying.player.ui.theme.Palette
 import com.dengying.player.ui.theme.ThemeMode
 import com.dengying.player.ui.theme.ThemePrefs
@@ -51,8 +56,9 @@ import kotlinx.coroutines.launch
  * 页头 = 标题 + 右上角设置钮。内容自上而下：个人信息卡（头像/姓名/登录态）→
  * 收藏/历史统计 → 主题风格 → 源状态入口。点卡片或「登录」胶囊进入独立登录页。
  *
- * 【登录态】[BttwoAuth] 是进程级单例（kv 落盘），本页用本地 state 镜像它的
+ * 【登录态】[AhAuth] 是进程级单例（kv 落盘），本页用本地 state 镜像它的
  * 快照；从登录页返回后重新读取一次，避免返回栈复用旧组合时不刷新。
+ * 「两个BT」4K 线路的解锁是另一条链路，不在本页展示。
  */
 @Composable
 fun MineScreen(
@@ -66,8 +72,9 @@ fun MineScreen(
     bottomPadding: Dp,
 ) {
     val scope = rememberCoroutineScope()
-    var loggedIn by remember { mutableStateOf(BttwoAuth.isLoggedIn()) }
-    var userName by remember { mutableStateOf(BttwoAuth.userName()) }
+    var loggedIn by remember { mutableStateOf(AhAuth.isLoggedIn()) }
+    var userName by remember { mutableStateOf(AhAuth.nickname()) }
+    var avatarUrl by remember { mutableStateOf(AhAuth.avatarUrl()) }
     var favCount by remember { mutableStateOf(0) }
     var histCount by remember { mutableStateOf(0) }
     // 登录页/注册页在独立 destination；其 NavBackStackEntry 回到 RESUMED 时才刷新。
@@ -86,9 +93,19 @@ fun MineScreen(
     androidx.compose.runtime.DisposableEffect(backStackEntry) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                loggedIn = BttwoAuth.isLoggedIn()
-                userName = BttwoAuth.userName()
+                loggedIn = AhAuth.isLoggedIn()
+                userName = AhAuth.nickname()
+                avatarUrl = AhAuth.avatarUrl()
                 refreshCounts()
+                if (AhAuth.needsProfile()) {
+                    scope.launch {
+                        if (AhAuth.refreshProfile()) {
+                            loggedIn = AhAuth.isLoggedIn()
+                            userName = AhAuth.nickname()
+                            avatarUrl = AhAuth.avatarUrl()
+                        }
+                    }
+                }
             }
         }
         backStackEntry?.lifecycle?.addObserver(observer)
@@ -138,7 +155,7 @@ fun MineScreen(
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 头像：登录取用户名首字符，未登录给通用人形
+                // 头像：有远程头像就显示，否则登录取昵称首字符，未登录给通用人形
                 Box(
                     modifier = Modifier
                         .size(52.dp)
@@ -146,14 +163,18 @@ fun MineScreen(
                         .background(Palette.Brand),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (loggedIn && userName.isNotBlank()) {
+                    if (avatarUrl.isNotBlank()) {
+                        RemoteAvatar(url = avatarUrl, modifier = Modifier.fillMaxSize())
+                    }
+                    if (avatarUrl.isBlank() && loggedIn && userName.isNotBlank()) {
                         Text(
                             text = userName.trim().firstOrNull()?.uppercase() ?: "",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = Palette.AppBg,
                         )
-                    } else {
+                    }
+                    if (avatarUrl.isBlank() && !(loggedIn && userName.isNotBlank())) {
                         DyIcon(icon = DyIcons.Person, tint = Palette.AppBg, size = 26.dp)
                     }
                 }
@@ -165,12 +186,19 @@ fun MineScreen(
                         color = Palette.TextPrimary,
                     )
                     Text(
-                        text = if (loggedIn) "两个BT · 4K 高清线路已解锁" else "登录两个BT 解锁 4K 高清线路",
+                        text = if (loggedIn) "已登录" else "登录后同步收藏与观看记录",
                         style = MaterialTheme.typography.labelMedium,
                         color = Palette.TextSecondary,
                     )
                 }
-                if (!loggedIn) {
+                if (loggedIn) {
+                    GlassChip(text = "退出", quiet = true, onClick = {
+                        AhAuth.logout()
+                        loggedIn = false
+                        userName = ""
+                        avatarUrl = ""
+                    })
+                } else {
                     GlassChip(text = "登录", selected = false, onClick = onOpenLogin)
                 }
             }
@@ -310,4 +338,28 @@ fun MineScreen(
             }
         }
     }
+}
+
+/**
+ * 远程头像。复用海报的取字节与解码通道，不引第三方图片库。
+ * 取不到图时什么都不画，由外层底色与首字符兜底。
+ */
+@Composable
+private fun RemoteAvatar(url: String, modifier: Modifier = Modifier) {
+    var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(url) {
+        bitmap = try {
+            val bytes = PosterFetch.fetch(url)
+            if (bytes == null || bytes.isEmpty()) null else PosterDecoder.decode(bytes)
+        } catch (_: Exception) {
+            null
+        }
+    }
+    val b = bitmap ?: return
+    Image(
+        bitmap = b,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier,
+    )
 }

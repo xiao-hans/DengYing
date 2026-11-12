@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlin.math.min
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import com.dengying.player.data.cache.PageCache
@@ -81,14 +82,6 @@ class IndexViewModel(
         val homeTabs: List<HomeTab> = emptyList(),
         /** 「推荐」页当前选中的 tab path；空串 = 尚未选中 */
         val homeTabPath: String = "",
-        /**
-         * 一次性操作反馈（"已刷新"等），UI 展示后自行清空。
-         *
-         * 【为什么需要】下拉刷新成功后源站常返回同一批内容，界面上没有任何
-         * 变化，用户会认为「刷新没生效」（实测反馈）。给一条短提示，让"确实
-         * 拉到了新数据"这件事可见；它不是错误信息，故与 [errMsg] 分开。
-         */
-        val notice: String = "",
     )
 
     data class UiState(
@@ -674,8 +667,12 @@ class IndexViewModel(
                     setCat(idx) { it.copy(refining = false, sections = emptyList(), errMsg = "推荐页暂时拉不到内容") }
                     return@launch
                 }
-                val sections = repo.fetchHomeSections(src, tab.path, force = true)
+                val fetched = repo.fetchHomeSections(src, tab.path, force = true)
                 if (!isLatest(idx, seq)) return@launch
+                // 源站这份首页是运营固定排的，直拉网络也换不出新片。带「换一换」
+                // 备用池的版块（备用片已接在条目后面）每次刷新整体轮换一格，
+                // 让下拉真正换出一批不同的片。
+                val sections = rotateRefreshed(state.cat(idx).sections, fetched)
                 sectionsByPath["${src.key}|${tab.path}"] = sections
                 setCat(idx) {
                     it.copy(
@@ -683,9 +680,6 @@ class IndexViewModel(
                         homeTabPath = tab.path,
                         sections = sections,
                         errMsg = if (sections.isEmpty()) "版块暂时没有内容" else "",
-                        // 刷新成功给一次可见反馈：源站常返回同一批内容，界面无变化
-                        // 会被当成「刷新没生效」。
-                        notice = if (sections.isEmpty()) "" else "已刷新 · ${sections.sumOf { s -> s.items.size }} 个内容",
                         refining = false,
                         loading = false,
                     )
@@ -700,10 +694,39 @@ class IndexViewModel(
         }
     }
 
-    /** 消费掉一次性提示（UI 展示完调用，避免下次进页又出现） */
-    fun dismissNotice(idx: Int) {
-        if (state.cat(idx).notice.isEmpty()) return
-        setCat(idx) { it.copy(notice = "") }
+    /**
+     * 刷新时轮换版块展示。
+     *
+     * 源站首页是运营固定排的，每次直拉都一样，而且「换一换」备用池只有
+     * 「重磅推荐」「精选热剧」「爆款短剧」三个版块有——「今日焦点」「首播影院」
+     * 这些占首屏的大版块一条备用片都没有，只轮换有备用池的版块用户看不出刷新。
+     * 所以每次刷新把每个版块当前展示在最前面的几部挪到末尾，横滑条开头就换一批。
+     * 片数有限，轮完一圈会回到原来的，但每次下拉都能看到不同的片。
+     */
+    private fun rotateRefreshed(
+        previous: List<HomeSection>,
+        fetched: List<HomeSection>,
+    ): List<HomeSection> {
+        val prevByTitle = previous.associateBy { it.title }
+        return fetched.map { section ->
+            val before = prevByTitle[section.title] ?: return@map section
+            val items = section.items
+            if (items.size < 2) return@map section
+            // 每次挪走的条数跟横滑条一屏能看见的张数对齐（约 3 张），又不超过一半，
+            // 避免片少的版块一下轮完。前后顺序一致说明没有轮换过，从 0 开始。
+            val step = min(3, items.size / 2)
+            val offset = if (
+                items.take(before.items.size) == before.items
+            ) {
+                0
+            } else {
+                val pos = items.indexOfFirst { it.vod_id == before.items.first().vod_id }
+                if (pos < 0) 0 else pos
+            }
+            val start = (offset + step) % items.size
+            if (start == 0) return@map section
+            HomeSection(title = section.title, items = items.drop(start) + items.take(start))
+        }
     }
 
     /** 加载某分类的下一页（带并发锁，防止重复触发） */

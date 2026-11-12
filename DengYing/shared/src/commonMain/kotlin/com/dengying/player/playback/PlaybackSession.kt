@@ -147,7 +147,17 @@ object PlaybackSession {
             )
             return
         }
-        _state.value = _state.value.copy(
+        // 【换集必须清进度】旧实现只改身份字段，curTime/totalTime 原样留下：
+        // 详情页内嵌位把会话状态直接映射成进度条，换集后的解析/缓冲期间
+        // 进度条仍停在上一集（用户反馈"旧视频加载条没重置"）。
+        // 同一集重播不清：引擎不 setMedia、位置本该延续，清了会被下一秒的
+        // 进度循环拉回去，只剩一次无意义的归零闪烁。
+        // totalTime 必须归 0：InlinePlayer 以 totalTime<=0 判定"还没拿到时长"
+        // 并显示缓冲态——这正是换集后应该看到的形态。
+        val prev = _state.value
+        val switchingEpisode = !prev.hasSession ||
+            prev.vodId != vodId || prev.source != source || prev.episodeIndex != episodeIndex
+        _state.value = prev.copy(
             status = Status.Resolving,
             url = rawUrl,
             headers = "",
@@ -160,6 +170,8 @@ object PlaybackSession {
             episodeName = episodeName,
             errMsg = "",
             buffering = false,
+            curTime = if (switchingEpisode) startAtMs else prev.curTime,
+            totalTime = if (switchingEpisode) 0L else prev.totalTime,
         )
 
         scope.launch {
@@ -307,6 +319,11 @@ object PlaybackSession {
         // 引擎此刻必已存在（调用方刚 setMedia 过），ensureEngine 幂等只补监听。
         ensureEngine()
         val cur = _state.value
+        // 与 play() 同一口径：换集/换片/换源要把进度归零。全屏页换集后回到
+        // 详情页，内嵌位读的是会话状态；不清的话会先画出上一集的进度。
+        // 同一集（进/退全屏的重复登记）保持原值——那条路径位置本就连续。
+        val switchingEpisode = !cur.hasSession || cur.url != url ||
+            cur.vodId != vodId || cur.source != source || cur.episodeIndex != episodeIndex
         _state.value = cur.copy(
             url = url,
             headers = headers,
@@ -319,6 +336,8 @@ object PlaybackSession {
             episodeName = episodeName,
             status = if (cur.status == Status.Idle) Status.Buffering else cur.status,
             errMsg = "",
+            curTime = if (switchingEpisode) 0L else cur.curTime,
+            totalTime = if (switchingEpisode) 0L else cur.totalTime,
         )
     }
 
