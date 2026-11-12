@@ -289,6 +289,35 @@ class PlayerViewModelEngineTest {
         }
     }
 
+    @Test
+    fun `已起播后 retry 会对同一地址再次 setMedia`() = runTest(timeout = 20.seconds) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val engine = RecordingEngine()
+        val vm = newVm(engine) { okProbe() }
+        vm.attachEngine()
+
+        try {
+            vm.primeEngineForTest(OLD_URL)
+            runCurrent()
+            assertEquals(1, engine.setMediaCalls.size, "前提：首次起播已 setMedia")
+            assertEquals(OLD_URL, engine.currentUrl)
+
+            vm.retry()
+            runCurrent()
+
+            assertEquals(
+                2,
+                engine.setMediaCalls.size,
+                "retry 必须重新 setMedia：bindEngine(null) 后新引擎没有媒体，" +
+                    "startedUrl 幂等判据不能把同址重试挡掉",
+            )
+            assertEquals(OLD_URL, engine.setMediaCalls.last().first, "重试应使用当前已解析地址")
+            assertEquals(OLD_URL, engine.currentUrl)
+        } finally {
+            vm.stopProgressLoopForTest()
+        }
+    }
+
     // ------------------------------------------------------------------ 取消 / 并发
 
     @Test

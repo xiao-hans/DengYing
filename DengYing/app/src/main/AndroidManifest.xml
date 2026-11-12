@@ -60,15 +60,10 @@
         </activity>
 
         <!--
-          投屏接收端发现由 MediaRouter + Cast SDK 完成；此处只登记本应用的
-          媒体会话能力，供系统媒体控件（通知栏/锁屏）显示播放信息。
-          它不改变"无第三方 SDK 出站"的口径：不接入 Google Cast 云端服务。
+          投屏通道未接入（见 docs/01 §1、docs/04 §3），这里不登记 Google Cast
+          的 OPTIONS_PROVIDER_CLASS_NAME：它指向的 DengYingCastOptionsProvider
+          从未存在，保留只会让 lint 的 MissingClass 被 tools:ignore 掩盖。
         -->
-        <meta-data
-            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
-            android:value="com.dengying.player.playback.cast.DengYingCastOptionsProvider"
-            tools:ignore="MissingClass" />
-
     </application>
 
 </manifest>

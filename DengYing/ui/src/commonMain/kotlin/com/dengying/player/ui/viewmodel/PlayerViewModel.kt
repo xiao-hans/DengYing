@@ -1561,6 +1561,11 @@ class PlayerViewModel(
             // 显式保证主线程：ExoPlayer 的 API 全部要求主线程（真机踩过 wrong-thread 异常）
             engineHost.surfaceInactive()
             bindEngine(null)
+            // 重试必须重新 setMedia：新引擎没有媒体，而 startEngine 的幂等判据
+            // （startedUrl == resolvedUrl）会直接 return，把重试变成黑屏。
+            // 旧实现依赖"引擎从不释放"这一前提；这里显式清空，地址与请求头成对清。
+            startedUrl = ""
+            startedHeaders = ""
             // 不直接 starting=false：startEngine 用代际管理该标志，
             // 手工复位会让在飞的起播提前解锁并二次 setMedia。
             if (urlReady) startEngine() else resolveUrl()
