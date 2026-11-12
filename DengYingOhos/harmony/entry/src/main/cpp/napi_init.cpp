@@ -563,8 +563,9 @@ napi_value RegisterHttpExecutor(napi_env env, napi_callback_info info) {
 
 // Kotlin 回调入口在 libdengyui.so 里，以 @CName("dengy_http_complete") 导出；
 // 显式 dlopen 句柄取址（DT_NEEDED 依赖不在全局符号作用域）。
-// 形参须与 Kotlin 侧逐字对齐：(Long, Int, Int, CPointer<ByteVar>?, Int)。
-using HttpCompleteFn = void (*)(int64_t, int32_t, int32_t, char*, int32_t);
+// 形参须与 Kotlin 侧逐字对齐：(Long, Int, Int, CPointer<ByteVar>?, Int, CPointer<ByteVar>?, Int)。
+// 末尾两个是响应头文本（逐行 `name: value`）及其长度；旧调用方不传时为空。
+using HttpCompleteFn = void (*)(int64_t, int32_t, int32_t, char*, int32_t, char*, int32_t);
 
 HttpCompleteFn ResolveHttpComplete() {
   static HttpCompleteFn cached = [] {
@@ -575,11 +576,12 @@ HttpCompleteFn ResolveHttpComplete() {
   return cached;
 }
 
-// ArkTS 执行器完成后回调：submitHttpResult(id, status, binary, b64)
+// ArkTS 执行器完成后回调：submitHttpResult(id, status, binary, b64, headersText?)
 // 失败约定 status=0、b64=""，与 commonMain 契约一致。
+// headersText 可选：逐行 `name: value`，同名头重复多行（set-cookie 不能按逗号切分）。
 napi_value SubmitHttpResult(napi_env env, napi_callback_info info) {
-  size_t argc = 4;
-  napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
+  size_t argc = 5;
+  napi_value args[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
   napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
   double id_num = 0;
@@ -589,14 +591,16 @@ napi_value SubmitHttpResult(napi_env env, napi_callback_info info) {
   napi_get_value_int32(env, args[1], &status);
   napi_get_value_int32(env, args[2], &binary);
   std::string b64 = ReadString(env, args[3]);
+  std::string headers = (argc >= 5 && args[4] != nullptr) ? ReadString(env, args[4]) : std::string();
 
   auto complete = ResolveHttpComplete();
-  BRIDGE_LOG("submitHttpResult id=%{public}lld status=%{public}d binary=%{public}d b64len=%{public}zu complete=%{public}s",
-             static_cast<long long>(id_num), status, binary, b64.size(),
+  BRIDGE_LOG("submitHttpResult id=%{public}lld status=%{public}d binary=%{public}d b64len=%{public}zu hdrlen=%{public}zu complete=%{public}s",
+             static_cast<long long>(id_num), status, binary, b64.size(), headers.size(),
              complete == nullptr ? "MISSING" : "ok");
   if (complete != nullptr) {
     complete(static_cast<int64_t>(id_num), status, binary, b64.data(),
-             static_cast<int32_t>(b64.size()));
+             static_cast<int32_t>(b64.size()), headers.data(),
+             static_cast<int32_t>(headers.size()));
   }
   return nullptr;
 }

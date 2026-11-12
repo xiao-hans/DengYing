@@ -33,7 +33,7 @@ import kotlin.coroutines.resume
  *   send() 生成 id → 挂起前把 continuation 存 pending
  *   → dlopen("libentry.so", RTLD_NOLOAD) + dlsym("dengy_http_submit")
  *   → 桥把 JSON 请求经 threadsafe function 投到 JS 线程
- *   → ArkTS 注册的执行器发 http.request → 完成后调 submitResult(id, status, binary, b64)
+ *   → ArkTS 注册的执行器发 http.request → 完成后调 submitResult(id, status, binary, b64, headersText)
  *   → 桥经 dlsym(RTLD_DEFAULT, "dengy_http_complete") 回调本文件的 httpComplete()
  *   → base64 解码 → RawResponse → resume 对应 continuation
  *
@@ -156,12 +156,21 @@ actual object HttpTransport {
         binary: Int,
         payloadBase64: CPointer<ByteVar>?,
         payloadLen: Int,
+        headerText: CPointer<ByteVar>?,
+        headerLen: Int,
     ) {
         val isBinary = binary != 0
         val slot = pendingLock.withLock { pending.remove(id) }
             ?: Slot({}, isBinary) // 已取消/超时：仍解码以对齐语义，但 resume 空操作
-        val response = decodePayload(status, payloadBase64, payloadLen, slot.binary)
+        val headers = decodeHeaderText(headerText, headerLen)
+        val response = decodePayload(status, payloadBase64, payloadLen, slot.binary, headers)
         slot.resumeWith(response)
+    }
+
+    /** 桥以逐行 `name: value` 传回响应头；缺省/空串折叠为空表（旧桥兼容）。 */
+    private fun decodeHeaderText(headerText: CPointer<ByteVar>?, headerLen: Int): Map<String, String> {
+        if (headerText == null || headerLen <= 0) return emptyMap()
+        return HttpHeaderCodec.decode(headerText.toKString())
     }
 
     @OptIn(ExperimentalEncodingApi::class)
@@ -170,19 +179,20 @@ actual object HttpTransport {
         payloadBase64: CPointer<ByteVar>?,
         payloadLen: Int,
         binary: Boolean,
+        headers: Map<String, String>,
     ): RawResponse {
         if (payloadBase64 == null || payloadLen <= 0) {
-            return RawResponse(status, "", ByteArray(0))
+            return RawResponse(status, "", ByteArray(0), headers)
         }
         val bytes = try {
             Base64.decode(payloadBase64.toKString())
         } catch (error: IllegalArgumentException) {
-            return RawResponse(0, "", ByteArray(0))
+            return RawResponse(0, "", ByteArray(0), emptyMap())
         }
         return if (binary) {
-            RawResponse(status, "", bytes)
+            RawResponse(status, "", bytes, headers)
         } else {
-            RawResponse(status, bytes.decodeToString(), ByteArray(0))
+            RawResponse(status, bytes.decodeToString(), ByteArray(0), headers)
         }
     }
 
@@ -242,6 +252,14 @@ actual object HttpTransport {
  */
 @OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
 @CName("dengy_http_complete")
-fun httpComplete(id: Long, status: Int, binary: Int, payloadBase64: CPointer<ByteVar>?, payloadLen: Int) {
-    HttpTransport.complete(id, status, binary, payloadBase64, payloadLen)
+fun httpComplete(
+    id: Long,
+    status: Int,
+    binary: Int,
+    payloadBase64: CPointer<ByteVar>?,
+    payloadLen: Int,
+    headerText: CPointer<ByteVar>?,
+    headerLen: Int,
+) {
+    HttpTransport.complete(id, status, binary, payloadBase64, payloadLen, headerText, headerLen)
 }
