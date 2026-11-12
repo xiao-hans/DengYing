@@ -16,7 +16,13 @@ import com.dengying.player.player.PlayerEngine
  * parity 清单逐项补（§16.40 未验证清单）。
  */
 
-/** 画面承载待接 ArkUI XComponent 互操作（ui-ohos klib 的 insertInteropView 路径）：先黑底占位。 */
+/**
+ * 画面承载待接 ArkUI XComponent 互操作（ui-ohos klib 的 insertInteropView 路径）：先黑底占位。
+ *
+ * TODO(播放器 WIP)：native AVPlayer 已能出声（见 shared 的 OhosPlayerEngine），
+ * 但还没有 surfaceId 通道 —— 需要 ArkTS 侧 XComponent 的 surfaceId 经 NAPI 传进来，
+ * 再调 `OH_NativeWindow_CreateNativeWindowFromSurfaceId` + `OH_AVPlayer_SetVideoSurface`。
+ */
 @Composable
 actual fun VideoSurface(
     engine: PlayerEngine?,
