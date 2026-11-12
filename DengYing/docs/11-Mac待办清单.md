@@ -87,7 +87,7 @@
   已落盘的真实状态：
   - `shared/src/ohosMain/` **12 个 actual 文件**（MediaCacheHost / HttpTransport / Aes / Rsa /
     Hash / Clock / TimeFormat / UrlCodec / IoDispatcher / Log / PlatformLock / PlaybackProbe），
-    共 703 行，已在**独立构建** `ohos-build/` 里 `compileKotlinOhosArm64` 实测通过
+    共 703 行，已在**独立构建** `archive/ohos-build/` 里 `compileKotlinOhosArm64` 实测通过
     （Kotlin 2.2.21-1.1.0 CPF 版，与本仓 2.4.21 主构建版本线互斥，故不能同构建共存）。
   - `harmony/ ArkTS/ArkUI 壳：`hvigorw … assembleHap` 实测 **BUILD SUCCESSFUL in 14s**，
     产物 `entry-default-unsigned.hap` 119,743 B。

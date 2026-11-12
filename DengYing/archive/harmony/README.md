@@ -25,9 +25,9 @@ P6-1（2026-10-27）时它只是一具能编译的骨架；P6-4（2026-11-01）�
 
 旧版 README 依据本仓 Kotlin 2.4.21 无 ohos target，判定「`:shared` 无法产出 ohos klib」。
 该结论已失效：**CPF（毕昇）Kotlin 2.2.21-1.1.0 支持 `ohos_arm64` 与 `ohos_x64`**，
-由仓根 `ohos-build/` 独立构建（版本线与主构建互斥，互不影响）：
+由同属 `archive/` 的 `ohos-build/` 独立构建（均已归档）（版本线与主构建互斥，互不影响）：
 
-1. `ohos-build` 里 `ohosX64()` 产出 sharedLib：`libdengying.so` + `libdengying_api.h`
+1. `archive/ohos-build` 里 `ohosX64()` 产出 sharedLib：`libdengying.so` + `libdengying_api.h`
    （`build/bin/ohosX64/debugShared/`）。模拟器是 x86_64 所以用 ohosX64；真机用 ohosArm64。
 2. `.so` 不导出任何 napi 注册入口，故壳侧 `entry/src/main/cpp/napi_init.cpp` 自写薄桥
    （现仅桥 `domain.search.TitleKey` 四个纯函数作链路验证）。
