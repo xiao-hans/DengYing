@@ -1,7 +1,10 @@
 package com.dengying.player.ui.platform
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayback
@@ -83,10 +86,26 @@ actual fun rememberFullscreenState(): FullscreenState = remember { FullscreenSta
  *
  * iOS 上「消费一次竖屏意图」= 把方向锁重置为「允许竖屏」，否则从横屏播放页返回后
  * 列表页会停在横屏。
+ *
+ * ## 【RESUMED 才收敛】与 Android v1.3.4 同口径
+ *
+ * 导航过渡期（详情页 → 播放页的转场）本页仍在组合、仍会重组，`SideEffect` 因此
+ * 会被再次执行。此时若照旧把 [IosOrientationLock] 顶回竖屏，就会把播放页刚
+ * 请求的横屏覆盖掉，真机表现为「先横屏又弹回竖屏」。播放页从发起请求到转屏
+ * 生效之间，没有任何机制能阻止旧页面的副作用重跑，故判据只能放在这里：
+ * **只有本页仍是前台页（RESUMED）时才收敛竖屏**。
+ *
+ * 返回本页时生命周期回到 RESUMED，重组中的 `SideEffect` 自然重新收敛竖屏，
+ * 与 Android 侧 `Fullscreen.android.kt` 的行为逐条一致。
  */
 @Composable
 actual fun ConsumePortraitOrientation() {
-    IosOrientationLock.request(UIInterfaceOrientationMaskPortrait)
+    val owner = LocalLifecycleOwner.current
+    SideEffect {
+        if (owner.lifecycle.currentState == Lifecycle.State.RESUMED) {
+            IosOrientationLock.request(UIInterfaceOrientationMaskPortrait)
+        }
+    }
 }
 
 /**
