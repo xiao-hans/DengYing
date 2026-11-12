@@ -78,10 +78,13 @@ object PlaybackSession {
 
     private var engine: PlayerEngine? = null
 
+    /** 会话级进度循环的句柄（测试可取消，见 [cancelProgressTickerForTest]） */
+    private var progressTicker: kotlinx.coroutines.Job? = null
+
     init {
         // 【会话级进度循环】唯一的进度推进器（替代初版分散在各页、
         // 且会在 onPlaying 抖动时无限累积的多个 while(true)——那是个真 bug）。
-        scope.launch {
+        progressTicker = scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(1000)
                 val e = engine ?: continue
@@ -91,6 +94,18 @@ object PlaybackSession {
                 _state.value = s.copy(curTime = e.currentPosition)
             }
         }
+    }
+
+    /**
+     * 仅供测试：停掉会话级进度循环。
+     *
+     * 该循环是 `while(true) + delay(1000)`，测试若把它跑在 `runTest` 的虚拟时钟上，
+     * 时间推进永远不会空闲（`advanceUntilIdle` 100% CPU 不返回）。生产代码不调用；
+     * 应用退出时随进程结束。
+     */
+    fun cancelProgressTickerForTest() {
+        progressTicker?.cancel()
+        progressTicker = null
     }
 
     /** 引擎监听是否已挂（引擎全局唯一，监听只挂一次） */

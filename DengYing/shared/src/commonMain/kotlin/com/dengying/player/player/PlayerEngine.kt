@@ -100,6 +100,19 @@ interface PlayerEngine {
     fun addListener(listener: PlayerListener)
 
     /**
+     * 注销状态回调。
+     *
+     * 【为什么接口必须有它】引擎是进程级单例（[PlayerEngineHost]），而播放页
+     * ViewModel 每次进入都会注册一个新的监听器。只增不减时，单例永久持有旧
+     * ViewModel：内存泄漏，且旧 VM 在用户离开后仍会收到 `onReady/onPlaying/
+     * onCompleted`，可能触发换集或历史落盘。VM 在 `onCleared` 与切换引擎时
+     * 必须按**同一实例**注销。
+     *
+     * 注销未注册过的实例应为无操作（幂等），不得抛异常。
+     */
+    fun removeListener(listener: PlayerListener)
+
+    /**
      * 供视图层绑定原生播放表面。
      *
      * **这是刻意的窄口子**：视图层需要一个具体播放器实例（Android = `Player`，
@@ -207,5 +220,6 @@ object NullPlayerEngine : PlayerEngine {
     override val isPlaying: Boolean get() = false
     override val currentUrl: String? get() = null
     override fun addListener(listener: PlayerListener) {}
+    override fun removeListener(listener: PlayerListener) {}
     override fun viewHandle(): Any? = null
 }

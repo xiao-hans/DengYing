@@ -66,6 +66,21 @@ class PlayerViewModel(
      * 经平台壳注入。
      */
     private val isDebug: Boolean,
+    /**
+     * 清晰度换档前的可达性探测。
+     *
+     * 生产固定走 [HlsUtil.probeReachability]；抽成参数只为让 `:ui:jvmTest`
+     * 注入确定结果，避免单测真的出网。默认值即生产行为。
+     */
+    private val probeReachability: suspend (String) -> HlsUtil.ReachResult =
+        HlsUtil::probeReachability,
+    /**
+     * 是否在 `init` 里自动挂引擎并走解析链。生产恒为 `true`。
+     *
+     * 单测传 `false`：解析链依赖 [SourceRepository] 的真实网络路径，无法在
+     * 纯 JVM 测试里构造；测试自己调 [attachEngine] 再驱动监听器。
+     */
+    private val startOnInit: Boolean = true,
 ) : ViewModel() {
 
     data class PlayerParams(
@@ -165,7 +180,146 @@ class PlayerViewModel(
      * 而"漏掉通知 = 黑屏"正是真机踩过的坑。
      */
     private fun bindEngine(e: PlayerEngine?) {
+        val prev = engine
+        if (prev === e) return
+        if (prev != null) {
+            // 【监听器必须按同一实例注销】引擎是进程级单例；不注销的话旧 VM 会被
+            // 永久持有，且离开页面后仍收到 onReady/onPlaying/onCompleted（B-7）。
+            prev.removeListener(engineListener)
+            progressLoop.stop()
+        }
         engine = e
+        if (e != null) e.addListener(engineListener)
+    }
+
+    /**
+     * 引擎状态回调。
+     *
+     * **必须是字段、只创建一次**：`bindEngine` 切换/注销时按同一实例调
+     * [PlayerEngine.removeListener]。若每次 `attachEngine` 都新建匿名对象，
+     * 旧监听器就永远留在引擎的列表里——这正是 B-7 的泄漏形态。
+     */
+    private val engineListener = object : PlayerListener {
+        override fun onReady(durationMs: Long) {
+            Log.w("DY/Player", "engine ready duration=$durationMs")
+            PlaybackProbe.note("engine-ready", "duration=$durationMs")
+            // 【清错误态】播放器就绪说明地址是好的——任何残留的失败提示都必须清掉，
+            // 否则会出现"进度条 + 播放失败"同屏。这是最后一道保证：
+            // 无论前面哪条路径漏了清理，就绪事件都会把状态收敛回正常。
+            state = state.copy(
+                prepared = true,
+                totalTime = durationMs,
+                status = "",
+                errMsg = "",
+                buffering = false,
+                // 试看标记此时会话已写好（play() 先于引擎就绪），两个路径都覆盖
+                isPreview = com.dengying.player.playback.PlaybackSession.currentState().isPreview,
+            )
+            // prepared 后按续播点恢复位置（FR-405：小于 3 秒视为从头）
+            restorePosition()
+            pendingSeekTargetMs = 0L
+            state = state.copy(controlsVisible = true)
+            scheduleHide()
+        }
+
+        override fun onPlaying() {
+            Log.w("DY/Player", "engine playing")
+            state = state.copy(isPlaying = true, status = "", buffering = false)
+            lastSaveTick = 0
+            // 【单循环】onPlaying 会随暂停恢复/seek/缓冲恢复重复触发；
+            // start() 内部有"已在运行就返回"的守卫，不会累积 while(true)（B-6）。
+            progressLoop.start()
+        }
+
+        override fun onPaused() {
+            progressLoop.stop()
+            state = state.copy(isPlaying = false)
+        }
+
+        override fun onBuffering(active: Boolean) {
+            state = state.copy(buffering = active)
+        }
+
+        override fun onCompleted() {
+            progressLoop.stop()
+            state = state.copy(isPlaying = false)
+            viewModelScope.launch { onCompleted() }
+        }
+
+        override fun onError(kind: PlaybackErrorKind, code: Int, message: String) {
+            Log.w("DY/Player", "engine error kind=$kind code=$code msg=$message")
+            PlaybackProbe.note("engine-error", "code=$code msg=${message.take(100)}")
+            // 出错后进度循环没有意义；错误恢复（换线/重试）会重新走 onPlaying 启动。
+            progressLoop.stop()
+
+            // 【错误分类，而不是一律当致命】真机实测踩坑：初版把任何 error 都
+            // 当成"线路不可播"并触发换线，结果 `code=3003`（Source error，
+            // 即 `ERROR_CODE_IO_UNSPECIFIED`）反复出现时陷入死循环——
+            // 同一地址被反复 startEngine，界面同时显示进度条与"播放失败"。
+            //
+            // Media3 对 IO 类错误**自己会重试**（默认 3 次退避重试），
+            // 应用层不该抢它的活。只有以下两类才是应用该介入的：
+            //  - 解码/格式不支持 → 换线路确实可能解决
+            //  - 源永久失效（如 404/403 语义）→ 换线路
+            //
+            // 【P4 变更】原来这里是一张 `when (code)` 的 Media3 错误码表，现在
+            // 分类已上移到引擎实现（`Media3Engine.errorKindOf`，见 `PlayerEngine.kt`
+            // 的 `PlaybackErrorKind`）。本 VM 只认枚举，不再认识任何 Media3 常量——
+            // 否则 iOS 侧没有对应常量可判。判定结果与旧表逐条等价：
+            // `Network` 是唯一非致命分支，其余（`SourceGone`/`Decode`/`Unknown`）都换线。
+            val fatal = kind != PlaybackErrorKind.Network
+
+            if (!fatal) {
+                // 可恢复：不显示失败，只提示正在重试；播放器会自己退避重试
+                state = state.copy(status = "网络抖动，正在重试…")
+                PlaybackProbe.note("error-recoverable", "code=$code")
+                return
+            }
+
+            state = state.copy(
+                status = "",
+                // FR-406 第三类：解码或地址失效。错误码进日志，原文不显示给用户
+                errMsg = "播放失败（解码错误或地址失效）",
+            )
+            // FR-411：只对致命错误换线，且**只做一轮**
+            switchLineOnPlaybackError()
+        }
+
+        override fun onVideoSize(width: Int, height: Int) {
+            Log.w("DY/Player", "videoSize ${width}x$height")
+            state = state.copy(
+                videoW = width,
+                videoH = height,
+                // 0x0 说明还没有视频轨：这就是"有声音没画面"的判定依据
+                hasVideoTrack = width > 0 && height > 0,
+            )
+        }
+    }
+
+    /**
+     * 进度推进循环（FR-410：每 5 个时间回调落盘一次）。见 [PlaybackProgressLoop]。
+     */
+    private val progressLoop = PlaybackProgressLoop(viewModelScope, onTick = ::onProgressTick)
+
+    private suspend fun onProgressTick() {
+        val eng = engine ?: run {
+            progressLoop.stop()
+            return
+        }
+        if (!eng.isPlaying) return
+        // 【拖动中不覆盖】进度条此刻显示的是 `dragValue`，
+        // 而整块状态是整体替换的；顺手改写 `curTime` 会让松手后的
+        // 差值基准漂移，浮层的差值与方向都会跟着变（P-02 的抖动来源之一）。
+        if (state.dragging) return
+        val pos = eng.currentPosition
+        if (!SeekPreview.shouldAdoptEnginePosition(pos, pendingSeekTargetMs)) {
+            // seek 尚未落地：保持目标位置，避免"先跳回旧位置再跳到新位置"
+            return
+        }
+        state = state.copy(curTime = pos)
+        if (pendingSeekTargetMs > 0L) pendingSeekTargetMs = 0L
+        lastSaveTick++
+        if (lastSaveTick % 5 == 0) persistHistory()
     }
 
     private var resolvedUrl = params.url
@@ -185,50 +339,52 @@ class PlayerViewModel(
             title = params.title,
             curEpIndex = params.episodeIndex,
         )
-        // 【引擎必须在进入组合之前就建好】真机黑屏的第三个根因：
-        // `key(eng)` 的 AndroidView 在**组合阶段**就读 `vm.engine`，而引擎原本是在
-        // `DisposableEffect`（组合之后）里创建的 —— 首帧读到的必然是 null，
-        // 且此后 `engine` 未变化就不会再重建视图。
-        //
-        // 用 Application 上下文：Media3 不需要 Activity/Window 上下文，
-        // 用 Application 还能避免 ViewModel 持有 Activity 造成的泄漏。
-        attachEngine()
-        // 【登记活跃播放表面】与 `PlayerScreen` 的 `onDispose` 配对（那里 -1）。
-        // 归零时 `PlaybackEngineHolder` 内部暂停播放——这是"离开后没有声音"的保证。
-        engineHost.surfaceActive()
-        viewModelScope.launch {
-            // FR-410：连播开关先读盘再起播，避免首集播完时开关尚未就绪
-            state = state.copy(autoNext = store.getAutoNext())
+        if (startOnInit) {
+            // 【引擎必须在进入组合之前就建好】真机黑屏的第三个根因：
+            // `key(eng)` 的 AndroidView 在**组合阶段**就读 `vm.engine`，而引擎原本是在
+            // `DisposableEffect`（组合之后）里创建的 —— 首帧读到的必然是 null，
+            // 且此后 `engine` 未变化就不会再重建视图。
+            //
+            // 用 Application 上下文：Media3 不需要 Activity/Window 上下文，
+            // 用 Application 还能避免 ViewModel 持有 Activity 造成的泄漏。
+            attachEngine()
+            // 【登记活跃播放表面】与 `PlayerScreen` 的 `onDispose` 配对（那里 -1）。
+            // 归零时 `PlaybackEngineHolder` 内部暂停播放——这是"离开后没有声音"的保证。
+            engineHost.surfaceActive()
+            viewModelScope.launch {
+                // FR-410：连播开关先读盘再起播，避免首集播完时开关尚未就绪
+                state = state.copy(autoNext = store.getAutoNext())
 
-            // 【FR-711 单会话】若会话已在播（内嵌点剧集 → 点全屏的路径），
-            // **什么都不做**：会话继续、引擎继续，本页只是全屏视图宿主。
-            // 初版这里无条件 `resolveUrl()`——即使会话已在播也重跑一遍，
-            // 是"点全屏又触发一次加载"的最后一个来源。
-            val s = com.dengying.player.playback.PlaybackSession.currentState()
-            if (s.hasSession && s.url == params.url) {
-                PlaybackProbe.note(
-                    "player-adopt-session",
-                    "pos=${s.curTime} status=${s.status}",
-                )
-                urlReady = true
-                startedUrl = s.url
-                resolvedUrl = s.url
-                resolvedHeaders = s.headers
-                state = state.copy(
-                    title = s.title,
-                    curEpIndex = s.episodeIndex,
-                    curTime = s.curTime,
-                    totalTime = s.totalTime,
-                    prepared = true,
-                    buffering = s.buffering,
-                    isPreview = s.isPreview,
-                    isPlaying = s.status == com.dengying.player.playback.PlaybackSession.Status.Playing,
-                )
-                return@launch
+                // 【FR-711 单会话】若会话已在播（内嵌点剧集 → 点全屏的路径），
+                // **什么都不做**：会话继续、引擎继续，本页只是全屏视图宿主。
+                // 初版这里无条件 `resolveUrl()`——即使会话已在播也重跑一遍，
+                // 是"点全屏又触发一次加载"的最后一个来源。
+                val s = com.dengying.player.playback.PlaybackSession.currentState()
+                if (s.hasSession && s.url == params.url) {
+                    PlaybackProbe.note(
+                        "player-adopt-session",
+                        "pos=${s.curTime} status=${s.status}",
+                    )
+                    urlReady = true
+                    startedUrl = s.url
+                    resolvedUrl = s.url
+                    resolvedHeaders = s.headers
+                    state = state.copy(
+                        title = s.title,
+                        curEpIndex = s.episodeIndex,
+                        curTime = s.curTime,
+                        totalTime = s.totalTime,
+                        prepared = true,
+                        buffering = s.buffering,
+                        isPreview = s.isPreview,
+                        isPlaying = s.status == com.dengying.player.playback.PlaybackSession.Status.Playing,
+                    )
+                    return@launch
+                }
+
+                // 会话空闲（历史记录直达播放的路径）→ 由本页发起起播
+                resolveUrl()
             }
-
-            // 会话空闲（历史记录直达播放的路径）→ 由本页发起起播
-            resolveUrl()
         }
     }
 
@@ -698,118 +854,8 @@ class PlayerViewModel(
         if (engine != null) return
         // 【用全局唯一引擎】官方推荐做法，见 PlaybackEngineHolder 的说明。
         // 初版在这里新建引擎，与详情页内嵌位各持一个，导致解码器抢占。
-        val e = engineHost.engine()
-        bindEngine(e)
-        e.addListener(object : PlayerListener {
-            override fun onReady(durationMs: Long) {
-                Log.w("DY/Player", "engine ready duration=$durationMs")
-                PlaybackProbe.note("engine-ready", "duration=$durationMs")
-                // 【清错误态】播放器就绪说明地址是好的——任何残留的失败提示都必须清掉，
-                // 否则会出现"进度条 + 播放失败"同屏。这是最后一道保证：
-                // 无论前面哪条路径漏了清理，就绪事件都会把状态收敛回正常。
-                state = state.copy(
-                    prepared = true,
-                    totalTime = durationMs,
-                    status = "",
-                    errMsg = "",
-                    buffering = false,
-                    // 试看标记此时会话已写好（play() 先于引擎就绪），两个路径都覆盖
-                    isPreview = com.dengying.player.playback.PlaybackSession.currentState().isPreview,
-                )
-                // prepared 后按续播点恢复位置（FR-405：小于 3 秒视为从头）
-                restorePosition()
-                pendingSeekTargetMs = 0L
-                state = state.copy(controlsVisible = true)
-                scheduleHide()
-            }
-
-            override fun onPlaying() {
-                Log.w("DY/Player", "engine playing")
-                state = state.copy(isPlaying = true, status = "", buffering = false)
-                // FR-410：每 5 个时间回调落盘一次
-                lastSaveTick = 0
-                viewModelScope.launch {
-                    while (true) {
-                        delay(1000)
-                        val eng = engine ?: break
-                        if (!eng.isPlaying) continue
-                        // 【拖动中不覆盖】进度条此刻显示的是 `dragValue`，
-                        // 而整块状态是整体替换的；顺手改写 `curTime` 会让松手后的
-                        // 差值基准漂移，浮层的差值与方向都会跟着变（P-02 的抖动来源之一）。
-                        if (state.dragging) continue
-                        val pos = eng.currentPosition
-                        if (!SeekPreview.shouldAdoptEnginePosition(pos, pendingSeekTargetMs)) {
-                            // seek 尚未落地：保持目标位置，避免"先跳回旧位置再跳到新位置"
-                            continue
-                        }
-                        state = state.copy(curTime = pos)
-                        if (pendingSeekTargetMs > 0L) pendingSeekTargetMs = 0L
-                        lastSaveTick++
-                        if (lastSaveTick % 5 == 0) persistHistory()
-                    }
-                }
-            }
-
-            override fun onPaused() {
-                state = state.copy(isPlaying = false)
-            }
-
-            override fun onBuffering(active: Boolean) {
-                state = state.copy(buffering = active)
-            }
-
-            override fun onCompleted() {
-                state = state.copy(isPlaying = false)
-                viewModelScope.launch { onCompleted() }
-            }
-
-            override fun onError(kind: PlaybackErrorKind, code: Int, message: String) {
-                Log.w("DY/Player", "engine error kind=$kind code=$code msg=$message")
-                PlaybackProbe.note("engine-error", "code=$code msg=${message.take(100)}")
-
-                // 【错误分类，而不是一律当致命】真机实测踩坑：初版把任何 error 都
-                // 当成"线路不可播"并触发换线，结果 `code=3003`（Source error，
-                // 即 `ERROR_CODE_IO_UNSPECIFIED`）反复出现时陷入死循环——
-                // 同一地址被反复 startEngine，界面同时显示进度条与"播放失败"。
-                //
-                // Media3 对 IO 类错误**自己会重试**（默认 3 次退避重试），
-                // 应用层不该抢它的活。只有以下两类才是应用该介入的：
-                //  - 解码/格式不支持 → 换线路确实可能解决
-                //  - 源永久失效（如 404/403 语义）→ 换线路
-                //
-                // 【P4 变更】原来这里是一张 `when (code)` 的 Media3 错误码表，现在
-                // 分类已上移到引擎实现（`Media3Engine.errorKindOf`，见 `PlayerEngine.kt`
-                // 的 `PlaybackErrorKind`）。本 VM 只认枚举，不再认识任何 Media3 常量——
-                // 否则 iOS 侧没有对应常量可判。判定结果与旧表逐条等价：
-                // `Network` 是唯一非致命分支，其余（`SourceGone`/`Decode`/`Unknown`）都换线。
-                val fatal = kind != PlaybackErrorKind.Network
-
-                if (!fatal) {
-                    // 可恢复：不显示失败，只提示正在重试；播放器会自己退避重试
-                    state = state.copy(status = "网络抖动，正在重试…")
-                    PlaybackProbe.note("error-recoverable", "code=$code")
-                    return
-                }
-
-                state = state.copy(
-                    status = "",
-                    // FR-406 第三类：解码或地址失效。错误码进日志，原文不显示给用户
-                    errMsg = "播放失败（解码错误或地址失效）",
-                )
-                // FR-411：只对致命错误换线，且**只做一轮**
-                switchLineOnPlaybackError()
-            }
-
-            override fun onVideoSize(width: Int, height: Int) {
-                Log.w("DY/Player", "videoSize ${width}x$height")
-                state = state.copy(
-                    videoW = width,
-                    videoH = height,
-                    // 0x0 说明还没有视频轨：这就是"有声音没画面"的判定依据
-                    hasVideoTrack = width > 0 && height > 0,
-                )
-            }
-        })
+        // 监听器的注册/注销统一由 bindEngine 负责（同一实例、成对出现）。
+        bindEngine(engineHost.engine())
     }
 
     /**
@@ -852,7 +898,14 @@ class PlayerViewModel(
         // 幂等的目的是防重复 `setMedia`（那会重建解码管线），
         // 不是防"恢复播放"。play() 是幂等操作，重复调无副作用。
         if (startedUrl == resolvedUrl) {
-            PlaybackProbe.note("startEngine-skip-setMedia-resume-play")
+            // 换档回退场景：同一地址不重设，但仍要把保留的进度 seek 回去
+            // （引擎在换档时被 pause 过，不能假设位置还在）。
+            val pending = consumePendingResume()
+            if (pending > 0L) eng.seekTo(pending)
+            PlaybackProbe.note(
+                "startEngine-skip-setMedia-resume-play",
+                "pending=$pending",
+            )
             eng.play()
             return
         }
@@ -861,6 +914,10 @@ class PlayerViewModel(
             return
         }
 
+        // 【快照】本次起播针对的地址。换档/换集会在 probe 期间改写 resolvedUrl；
+        // 若预热缓存后才读字段，旧起播会把新地址的 setMedia 覆盖掉。
+        val targetUrl = resolvedUrl
+        val targetHeaders = resolvedHeaders
         val resume = resumePositionOrZero()
         starting = true
         viewModelScope.launch {
@@ -868,7 +925,7 @@ class PlayerViewModel(
                 state = state.copy(status = "正在初始化播放器…")
                 PlaybackProbe.note(
                     "startEngine",
-                    "urlLen=${resolvedUrl.length} headers=${resolvedHeaders.isNotEmpty()} resume=$resume",
+                    "urlLen=${targetUrl.length} headers=${targetHeaders.isNotEmpty()} resume=$resume",
                 )
                 // 【分两步，不能整个丢进 IO 线程】真机探针抓到过
                 // `IllegalStateException: Player is accessed on the wrong thread`：
@@ -877,17 +934,22 @@ class PlayerViewModel(
                 // 故：先 IO 预热缓存，再回主线程调 ExoPlayer。
                 // 预热后 `MediaCache.wrap` 命中单例立即返回，主线程不再被阻塞。
                 com.dengying.player.data.cache.MediaCache.warmUp()
-                eng.setMedia(resolvedUrl, resolvedHeaders, resume)
+                // 预热期间地址被换档/换集改写 → 本次起播已过期，交给新起播处理。
+                if (resolvedUrl != targetUrl) {
+                    PlaybackProbe.note("startEngine-aborted-url-changed", "len=${targetUrl.length}")
+                    return@launch
+                }
+                eng.setMedia(targetUrl, targetHeaders, resume)
                 eng.setSpeed(state.speed)
                 eng.play()
-                startedUrl = resolvedUrl
+                startedUrl = targetUrl
                 // 【会话登记（FR-711 不变量）】本页自主起播不经过 PlaybackSession.play，
                 // 会话单例此前一直 Idle/urlEmpty——返回详情页时 resumeInlineIfPlaying 与
                 // 详情页全屏键的 hasSession 检查全部静默失效（docs/05 §9.8）。
                 // 引擎监听/进度循环全局生效，这里只补身份字段；失败路径不登记（无 playback 可见）。
                 com.dengying.player.playback.PlaybackSession.registerPlayback(
-                    url = resolvedUrl,
-                    headers = resolvedHeaders,
+                    url = targetUrl,
+                    headers = targetHeaders,
                     title = state.title,
                     vodName = params.vodName,
                     vodId = params.vodId,
@@ -935,11 +997,6 @@ class PlayerViewModel(
     /** 换集后置 true：本次起播由用户显式换集触发，不读历史续播点（历史按影片存，不分集） */
     private var resumeSuppressed: Boolean = false
 
-    /** 供视图挂载后调用：引擎就绪即尝试起播 */
-    fun onEngineAttached() {
-        if (urlReady) startEngine()
-    }
-
     /** FR-405：按（影片 + 线路 + 集数）精确恢复，避免跳到别的集 */
     /**
      * `setMedia` 时要用的起播位置。
@@ -947,11 +1004,15 @@ class PlayerViewModel(
      * 【FR-705】优先用路由显式传入的 [PlayerParams.startAtMs]（内嵌态切全屏的场景）——
      * 这个值来自"用户刚刚看到的位置"，比历史记录更准、也更符合预期。
      *
+     * **换档保留的进度**（[pendingResumeMs]）优先级最高：换清晰度不是为了从头看。
      * 未指定时返回 0，真实续播点由 [restorePosition] 在 `onReady` 后异步 seek。
      * 分两步的理由：历史续播点要读盘（IO），不该阻塞 `setMedia`；
      * 而 `startAtMs` 是现成的值，直接交给 `setMedia` 可以让首帧就落在正确位置。
      */
-    private fun resumePositionOrZero(): Long = epStartAtMs
+    private fun resumePositionOrZero(): Long {
+        val pending = consumePendingResume()
+        return if (pending > 0L) pending else epStartAtMs
+    }
 
     private fun restorePosition() {
         // 【先落探针再判早退】真机“手动 seek 后画面又被拉回去”就是从这里发生的。
@@ -1165,8 +1226,10 @@ class PlayerViewModel(
         if (url.isEmpty() || url == state.selectedVariant) return
         switchTried = false
         val keep = state.curTime
+        // 回退用的原地址/原档位：探测失败时必须还原，不能停在半切换状态。
+        val previousUrl = resolvedUrl
+        val previousVariant = state.selectedVariant
         state = state.copy(showQualitySheet = false, selectedVariant = url, status = "正在切换清晰度…")
-        resolvedUrl = url
 
         viewModelScope.launch {
             // 显式保证主线程：ExoPlayer 的 API 全部要求主线程（真机踩过 wrong-thread 异常）
@@ -1176,18 +1239,38 @@ class PlayerViewModel(
             urlReady = false
             state = state.copy(prepared = false, buffering = false)
 
-            val probe = HlsUtil.probeReachability(resolvedUrl)
-            if (!(probe.m3u8Ok && (probe.segOk || probe.segHost.isEmpty()))) {
+            val reachable = runCatching {
+                val probe = probeReachability(url)
+                probe.m3u8Ok && (probe.segOk || probe.segHost.isEmpty())
+            }.getOrDefault(false)
+
+            if (reachable) {
+                resolvedUrl = url
+                state = state.copy(curTime = keep, totalTime = 0, prepared = false, status = "")
+                urlReady = true
+                // 由 startEngine 消费并交给 setMedia，换档后从原进度继续。
+                pendingResumeMs = keep
+            } else {
+                // 【必须回退并重新起播】旧实现探测失败后直接 return：engine 停在 null、
+                // urlReady=false，界面永久黑屏且无恢复路径（审计 B-2）。这里把原地址
+                // 交还引擎，按保留进度继续播，并给出可见提示。
+                resolvedUrl = previousUrl
                 state = state.copy(
-                    errMsg = "该清晰度暂时不可用，请换回原档位或重试",
+                    selectedVariant = previousVariant,
+                    curTime = keep,
+                    totalTime = 0,
+                    prepared = false,
                     status = "",
+                    errMsg = "该清晰度暂时不可用，已回退原档位",
                 )
-                return@launch
+                urlReady = true
+                pendingResumeMs = keep
             }
-            state = state.copy(curTime = keep, totalTime = 0, prepared = false, status = "")
-            urlReady = true
-            // 引擎已释放，由 UI 侧重新挂载时懒建再起播
-            pendingResumeMs = keep
+            // 上面 surfaceInactive 过一次；起播前补回表面计数，否则离开页面时计数错位。
+            engineHost.surfaceActive()
+            // 真正重新绑定引擎并起播新地址（成功）或原地址（回退）。
+            // 换档后 resolvedUrl 与 startedUrl 不同，幂等判据不会误吞 setMedia。
+            startEngine()
         }
     }
 
@@ -1197,7 +1280,8 @@ class PlayerViewModel(
     private var resumeRestoreRequested: Boolean = false
     private var manualSeekOccurred: Boolean = false
 
-    fun consumePendingResume(): Long {
+    /** 取出并清空待恢复进度；只应由起播路径调用。 */
+    private fun consumePendingResume(): Long {
         val v = pendingResumeMs
         pendingResumeMs = 0
         return v
@@ -1346,8 +1430,22 @@ class PlayerViewModel(
 
     // ---------------- 生命周期 ----------------
 
+    /**
+     * 仅供 `:ui:jvmTest`：停掉常驻进度循环。
+     *
+     * 测试没有 Activity 生命周期，`onCleared` 是 protected 且 `viewModelScope`
+     * 不会自己结束；若不显式停循环，虚拟时钟上永远有下一次 `delay` 等待，
+     * `runTest` 收尾会一直推进时间（表现为测试无限挂起）。
+     */
+    internal fun stopProgressLoopForTest() {
+        progressLoop.stop()
+    }
+
     override fun onCleared() {
         super.onCleared()
+        // 【先停进度循环与监听】否则循环会在 viewModelScope 取消前再写一次状态，
+        // 且旧 VM 可能继续响应单例引擎的回调（B-6 / B-7）。
+        progressLoop.stop()
         // FR-408：离开页面立即落盘位置并释放引擎
         val pos = state.curTime
         val snap = state
