@@ -213,10 +213,28 @@ class OhosPlayerEngine : PlayerEngine {
      */
     private suspend fun awaitWindowReleased(w: CPointer<OHNativeWindow>): Boolean {
         while (true) {
-            if (isWindowBlocked(w)) return false
-            val pending = pendingReleases[w]?.toList().orEmpty()
-            if (pending.isEmpty()) return !isWindowBlocked(w)
-            pending.map { it.done }.awaitAll()
+            if (blockedWindows.contains(w)) return false
+            val list = pendingReleases[w] ?: return true
+            // 先就地消化已完成的任务：[trackRelease] 的清理协程排在 mainScope 队列里，
+            // 可能晚于本次 bind 执行；而 awaitAll 对已完成的 Deferred 立即返回，
+            // 若只靠它等待，已完成条目无法出表，循环会空转占死主线程。
+            val it = list.iterator()
+            while (it.hasNext()) {
+                val task = it.next()
+                if (!task.done.isCompleted) continue
+                if (task.done.isCancelled || task.failed) {
+                    blockedWindows.add(w)
+                    Log.w(TAG, "window marked unbindable: previous ReleaseSync failed")
+                    return false
+                }
+                it.remove()
+            }
+            if (list.isEmpty()) {
+                pendingReleases.remove(w)
+                return !isWindowBlocked(w)
+            }
+            // 仍有未完成的任务：挂起等待（不是忙等），其中至少一个完成后重扫。
+            list.map { it.done }.awaitAll()
         }
     }
 
