@@ -24,6 +24,7 @@ import platform.AVCodecKit.Core.OH_AVFormat_GetLongValue
 import platform.MediaKit.AVPlayer.*
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.math.abs
 
 /**
  * 鸿蒙播放引擎 —— 直接用 MediaKit 的 native AVPlayer（libavplayer.so）。
@@ -82,6 +83,43 @@ class OhosPlayerEngine : PlayerEngine {
 
         // AVPlayerSeekMode.AV_SEEK_CLOSEST（since 12）
         val SEEK_CLOSEST: AVPlayerSeekMode = 2u
+
+        // AVPlaybackSpeed 在 klib 里是真实 enum（CEnum），只能按档位设置。
+        // 表中按 speed 值升序排列，用于把任意 float 映射到最近档。
+        val SPEED_TABLE: List<Pair<Float, AVPlaybackSpeed>> = listOf(
+            0.125f to AVPlaybackSpeed.AV_SPEED_FORWARD_0_125_X,
+            0.25f to AVPlaybackSpeed.AV_SPEED_FORWARD_0_25_X,
+            0.5f to AVPlaybackSpeed.AV_SPEED_FORWARD_0_50_X,
+            0.75f to AVPlaybackSpeed.AV_SPEED_FORWARD_0_75_X,
+            1f to AVPlaybackSpeed.AV_SPEED_FORWARD_1_00_X,
+            1.25f to AVPlaybackSpeed.AV_SPEED_FORWARD_1_25_X,
+            1.5f to AVPlaybackSpeed.AV_SPEED_FORWARD_1_50_X,
+            1.75f to AVPlaybackSpeed.AV_SPEED_FORWARD_1_75_X,
+            2f to AVPlaybackSpeed.AV_SPEED_FORWARD_2_00_X,
+            3f to AVPlaybackSpeed.AV_SPEED_FORWARD_3_00_X,
+        )
+    }
+
+    /**
+     * 回调归属锚点：userData 指向这里，而不是裸引擎引用。
+     *
+     * native 回调只给一个 userData 指针 + 触发它的 player 指针。换集/换源时旧
+     * player 的 STATE_CHANGE/错误仍可能迟到，因此回调里必须同时校验
+     * 「代次 + player 指针 + 是否已失效」，不匹配就整条丢弃，绝不允许旧
+     * player 的事件改写新 player 的 state/playing。
+     */
+    private class CallbackAnchor(
+        val engine: OhosPlayerEngine,
+        val generation: Long,
+        val player: CPointer<OH_AVPlayer>,
+    ) {
+        /** 释放前置 false；在途回调看到后不再触碰引擎状态。 */
+        @Volatile
+        var active: Boolean = true
+
+        /** player 指针匹配（SDK 未回传时退化为只看代次）。 */
+        fun matches(cbPlayer: CPointer<OH_AVPlayer>?): Boolean =
+            cbPlayer == null || cbPlayer == player
     }
 
     /** 监听器快照，回调线程与主线程并发读写；K/N 新内存模型下 @Volatile 引用即可。 */
@@ -89,7 +127,10 @@ class OhosPlayerEngine : PlayerEngine {
     private var listeners: List<PlayerListener> = emptyList()
 
     private var player: CPointer<OH_AVPlayer>? = null
-    private var callbacksAnchor: StableRef<OhosPlayerEngine>? = null
+    private var callbacksAnchor: StableRef<CallbackAnchor>? = null
+
+    /** 每换一次 player 递增，回调按代次过滤旧 player 的异步事件。 */
+    private var generation: Long = 0L
 
     private var state: Int = STATE_IDLE
     private var durationMs: Long = 0L
@@ -127,34 +168,37 @@ class OhosPlayerEngine : PlayerEngine {
         }
         player = p
 
-        // userData 里放引擎引用；StableRef 必须保活到 Release 之后。
-        val anchor = StableRef.create(this)
-        callbacksAnchor = anchor
+        // userData 里放「引擎 + 代次 + player」锚点，StableRef 保活到 ReleaseSync 返回之后。
+        val anchor = CallbackAnchor(this, generation, p)
+        val anchorRef = StableRef.create(anchor)
+        callbacksAnchor = anchorRef
         OH_AVPlayer_SetOnInfoCallback(
             p,
-            staticCFunction { _: CPointer<OH_AVPlayer>?, type: AVPlayerOnInfoType,
+            staticCFunction { cbPlayer: CPointer<OH_AVPlayer>?, type: AVPlayerOnInfoType,
                 body: CPointer<OH_AVFormat>?, userData: COpaquePointer? ->
                 try {
-                    val engine = userData?.asStableRef<OhosPlayerEngine>()?.get() ?: return@staticCFunction
-                    engine.handleInfo(type, body)
+                    val a = userData?.asStableRef<CallbackAnchor>()?.get() ?: return@staticCFunction
+                    if (!a.active || !a.matches(cbPlayer)) return@staticCFunction
+                    a.engine.handleInfo(a, type, body)
                 } catch (t: Throwable) {
                     Log.w(TAG, "onInfo failed: ${t.message}")
                 }
             },
-            anchor.asCPointer(),
+            anchorRef.asCPointer(),
         )
         OH_AVPlayer_SetOnErrorCallback(
             p,
-            staticCFunction { _: CPointer<OH_AVPlayer>?, code: Int, msg: CPointer<ByteVar>?,
+            staticCFunction { cbPlayer: CPointer<OH_AVPlayer>?, code: Int, msg: CPointer<ByteVar>?,
                 userData: COpaquePointer? ->
                 try {
-                    val engine = userData?.asStableRef<OhosPlayerEngine>()?.get() ?: return@staticCFunction
-                    engine.onNativeError(code, msg?.toKString() ?: "")
+                    val a = userData?.asStableRef<CallbackAnchor>()?.get() ?: return@staticCFunction
+                    if (!a.active || !a.matches(cbPlayer)) return@staticCFunction
+                    a.engine.onNativeError(a, code, msg?.toKString() ?: "")
                 } catch (t: Throwable) {
                     Log.w(TAG, "onError failed: ${t.message}")
                 }
             },
-            anchor.asCPointer(),
+            anchorRef.asCPointer(),
         )
 
         val ret = OH_AVPlayer_SetURLSource(p, url)
@@ -204,7 +248,8 @@ class OhosPlayerEngine : PlayerEngine {
         if (state == STATE_PREPARED || state == STATE_PLAYING ||
             state == STATE_PAUSED
         ) {
-            OH_AVPlayer_SetPlaybackRate(p, speed)
+            // SetPlaybackRate 是 API 20；compatibleSdkVersion 是 17，必须用 API 11 的枚举接口。
+            OH_AVPlayer_SetPlaybackSpeed(p, avSpeedOf(speed))
         }
     }
 
@@ -260,12 +305,30 @@ class OhosPlayerEngine : PlayerEngine {
         player = null
         playing = false
         state = STATE_RELEASED
-        if (p != null) {
-            OH_AVPlayer_Release(p)
-        }
-        callbacksAnchor?.dispose()
+        generation++
+
+        val anchorRef = callbacksAnchor
         callbacksAnchor = null
+        // 先置失效：release 期间到达的旧回调直接丢弃，不再改引擎状态。
+        anchorRef?.get()?.active = false
+
+        if (p != null) {
+            // OH_AVPlayer_Release 是异步的（"Releases player resources async"）；
+            // 必须用 API 11 起的 ReleaseSync，返回后旧 player 不再产生回调，
+            // 此时 dispose StableRef 才安全（否则回调里 asStableRef 读已释放内存）。
+            OH_AVPlayer_ReleaseSync(p)
+        }
+        anchorRef?.dispose()
     }
+
+    /** 最近档映射：AVPlaybackSpeed 只有离散档位，取绝对差最小的一档。 */
+    private fun avSpeedOf(speed: Float): AVPlaybackSpeed =
+        SPEED_TABLE.minByOrNull { abs(it.first - speed) }?.second
+            ?: AVPlaybackSpeed.AV_SPEED_FORWARD_1_00_X
+
+    /** 回调是否仍属于当前 player（代次 + 指针 + 未失效）。 */
+    private fun isCurrent(a: CallbackAnchor): Boolean =
+        a.active && a.generation == generation && player == a.player
 
     private fun applyPendingSeek(p: CPointer<OH_AVPlayer>) {
         if (pendingSeekMs > 0L) {
@@ -274,11 +337,13 @@ class OhosPlayerEngine : PlayerEngine {
             pendingSeekMs = 0L
         }
         if (speed != 1f) {
-            OH_AVPlayer_SetPlaybackRate(p, speed)
+            OH_AVPlayer_SetPlaybackSpeed(p, avSpeedOf(speed))
         }
     }
 
-    private fun handleInfo(type: AVPlayerOnInfoType, body: CPointer<OH_AVFormat>?) {
+    private fun handleInfo(a: CallbackAnchor, type: AVPlayerOnInfoType, body: CPointer<OH_AVFormat>?) {
+        // 旧 player 的迟到事件不得改写新 player 的状态。
+        if (!isCurrent(a)) return
         when (type.toInt()) {
             INFO_STATE_CHANGE -> onStateChanged(intOf(body, OH_PLAYER_STATE))
             INFO_DURATION_UPDATE -> {
@@ -358,7 +423,8 @@ class OhosPlayerEngine : PlayerEngine {
         }
     }
 
-    private fun onNativeError(code: Int, message: String) {
+    private fun onNativeError(a: CallbackAnchor, code: Int, message: String) {
+        if (!isCurrent(a)) return
         playing = false
         notifyError(classify(code, message), code, message)
     }
