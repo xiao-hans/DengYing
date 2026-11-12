@@ -10,6 +10,10 @@ const TAG = 'DY/Compose';
 struct ComposePage {
   private controller: ArkUIViewController | undefined = undefined;
   @State errorMessage: string = '';
+  // 播放画面：全屏 XComponent 铺在 Compose 下方，surfaceId 经 NAPI 交给 native AVPlayer。
+  // 位置限制见 Kotlin VideoSurface actual 的注释（当前尚未做 Compose interop 定位）。
+  private surfaceController: XComponentController = new XComponentController();
+  private surfaceId: string = '';
 
   aboutToAppear(): void {
     try {
@@ -23,23 +27,58 @@ struct ComposePage {
   }
 
   build(): void {
-    Column() {
-      if (this.controller !== undefined) {
-        Compose({
-          // pageId 必须与 Kotlin 侧已注册的控制器 id 完全一致：
-          // CMP 的 OhosComposeControllerIdContracts 只接受 "Compose_<n>" 形式，
-          // 而 har 在 pageId 缺省时会自行拼 "oh_canvas_<n>"，导致 XComponentHolder
-          // 用 oh_canvas_0 找不到 render（CMP.ControllerRegistry.IdRejected reason=invalid）。
-          pageId: 'Compose_0',
-          controller: this.controller,
-          libraryName: 'entry',
-          onBackPressed: () => this.controller !== undefined ? this.controller.onBackPress() : false
+    // Stack 的绘制顺序：先 XComponent（视频层），再 Compose（UI 层）。
+    // 播放页的 VideoSurface 在 surface 就绪后透明，视频从下层透出；未就绪时
+    // Kotlin 侧画黑底。Compose 中其余不透明区域会遮住视频 —— 当前全屏
+    // XComponent 只能保证「播放页铺满」这一种版式，内嵌小窗需后续 interop。
+    Stack({ alignContent: Alignment.TopStart }) {
+      XComponent({
+        id: 'dy_video_surface',
+        type: XComponentType.SURFACE,
+        controller: this.surfaceController
+      })
+        .onLoad(() => {
+          try {
+            this.surfaceId = this.surfaceController.getXComponentSurfaceId();
+            dengying.setVideoSurfaceId(this.surfaceId);
+            hilog.warn(DOMAIN, TAG, 'surface ready: %{public}s', this.surfaceId);
+          } catch (e) {
+            hilog.error(DOMAIN, TAG, 'surface onLoad failed: %{public}s', JSON.stringify(e));
+          }
         })
-      } else {
-        Text(this.errorMessage === '' ? 'controller pending' : this.errorMessage)
-          .fontSize(16)
-          .fontColor(Color.Red)
+        .onDestroy(() => {
+          try {
+            if (this.surfaceId !== '') {
+              dengying.clearVideoSurfaceId(this.surfaceId);
+            }
+          } catch (e) {
+            hilog.warn(DOMAIN, TAG, 'surface onDestroy failed: %{public}s', JSON.stringify(e));
+          }
+          this.surfaceId = '';
+        })
+        .width('100%')
+        .height('100%')
+
+      Column() {
+        if (this.controller !== undefined) {
+          Compose({
+            // pageId 必须与 Kotlin 侧已注册的控制器 id 完全一致：
+            // CMP 的 OhosComposeControllerIdContracts 只接受 "Compose_<n>" 形式，
+            // 而 har 在 pageId 缺省时会自行拼 "oh_canvas_<n>"，导致 XComponentHolder
+            // 用 oh_canvas_0 找不到 render（CMP.ControllerRegistry.IdRejected reason=invalid）。
+            pageId: 'Compose_0',
+            controller: this.controller,
+            libraryName: 'entry',
+            onBackPressed: () => this.controller !== undefined ? this.controller.onBackPress() : false
+          })
+        } else {
+          Text(this.errorMessage === '' ? 'controller pending' : this.errorMessage)
+            .fontSize(16)
+            .fontColor(Color.Red)
+        }
       }
+      .width('100%')
+      .height('100%')
     }
     .width('100%')
     .height('100%')

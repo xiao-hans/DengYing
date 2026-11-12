@@ -19,6 +19,11 @@ import kotlinx.cinterop.LongVar
 import kotlinx.cinterop.toKString
 import cnames.structs.OH_AVFormat
 import cnames.structs.OH_AVPlayer
+import platform.ArkGraphics2D.NativeWindow.OHNativeWindow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import platform.AVCodecKit.Core.OH_AVFormat_GetIntValue
 import platform.AVCodecKit.Core.OH_AVFormat_GetLongValue
 import platform.MediaKit.AVPlayer.*
@@ -48,13 +53,15 @@ import kotlin.math.abs
  *   状态→onReady/onPlaying/onPaused/onCompleted/onBuffering/onError，
  *   时长与视频尺寸。
  * - **未实现：自定义请求头**。本 SDK 版本的 avplayer.h 没有
- *   SetMediaSourceHeader 之类的入口（只有 SetURLSource/SetFDSource），
- *   headersJson 目前仅记录，不生效；需要请求头的源会失败。
- * - **未实现：画面绑定**。需要 ArkUI XComponent 的 surfaceId +
- *   OH_NativeWindow_CreateNativeWindowFromSurfaceId；`VideoSurface.ohos.kt`
- *   仍是黑底 Box。当前只能出声不出画。
- * - 回调在 AVPlayer 的工作线程触发（不是主线程）。PlayerEngine 契约要求
- *   主线程回调，接线 Compose 状态前需要切主线程；WIP 阶段先同步透传。
+ *   SetMediaSourceHeader 之类的入口（只有 SetURLSource/SetFDSource，
+ *   platform klib 里也没有 OH_AVMediaSource_* 符号），headersJson 目前仅记录，
+ *   不生效。可选方案见 `DengYingOhos/docs/ohos-player-notes.md`。
+ * - 画面绑定：surfaceId 经 ArkTS XComponent → NAPI → [OhosVideoSurfaceBridge]
+ *   传入，`setMedia` 里在 Prepare 之前 `OH_AVPlayer_SetVideoSurface`。
+ * - 回调线程：native 回调只做「归属校验 + 拷贝 body 值」，随后 `Dispatchers.Main`
+ *   派发；状态字段与 listener 通知都在主线程完成（PlaybackSession 也在 Main）。
+ * - 释放：`ReleaseSync` 移出主线程，在 Dispatchers.Default 执行；锚点先失效，
+ *   后台返回后再 dispose StableRef，换集不等待旧 release。
  */
 class OhosPlayerEngine : PlayerEngine {
 
@@ -126,12 +133,30 @@ class OhosPlayerEngine : PlayerEngine {
     @Volatile
     private var listeners: List<PlayerListener> = emptyList()
 
+    /**
+     * 主线程派发：native 回调线程只做最小记录与归属校验，真正的状态改写和
+     * listener 通知都投到这里（PlayerEngine 契约要求主线程回调）。
+     * PlaybackSession 本身也跑在 Dispatchers.Main，故 ohos 上的 Main 调度器可用。
+     */
+    private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    /** ReleaseSync 会阻塞（非 idle 时较长），单独放后台，绝不占主线程/UI。 */
+    private val releaseScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // surface 回调来自 ArkTS UI 线程、状态改写来自 Dispatchers.Main，置 @Volatile
+    // 保证 onVideoSurfaceChanged 看到的是已发布的 player/state。
+    @Volatile
     private var player: CPointer<OH_AVPlayer>? = null
+
+    /** 当前显示面。surface 可能在 player 之前/之后到达，统一由 [onVideoSurfaceChanged] 维护。 */
+    @Volatile
+    private var videoWindow: CPointer<OHNativeWindow>? = null
     private var callbacksAnchor: StableRef<CallbackAnchor>? = null
 
     /** 每换一次 player 递增，回调按代次过滤旧 player 的异步事件。 */
     private var generation: Long = 0L
 
+    @Volatile
     private var state: Int = STATE_IDLE
     private var durationMs: Long = 0L
     private var positionMs: Long = 0L
@@ -146,6 +171,9 @@ class OhosPlayerEngine : PlayerEngine {
 
     override fun setMedia(url: String, headersJson: String, startPositionMs: Long) {
         releasePlayer()
+        // 引擎可能在上一次 release 时注销过，这里重新挂到全局 surface 通道。
+        OhosVideoSurfaceBridge.register(this)
+        videoWindow = OhosVideoSurfaceBridge.currentWindow()
         loadedUrl = url
         this.headersJson = headersJson
         pendingSeekMs = startPositionMs
@@ -158,7 +186,11 @@ class OhosPlayerEngine : PlayerEngine {
 
         if (headersJson.isNotEmpty()) {
             // 本版本 native API 无请求头入口，明确留痕，避免误判成「源坏了」。
-            Log.w(TAG, "headers ignored: native OH_AVPlayer has no header API")
+            // TODO(请求头)：OH_AVPlayer_SetURLSource 不接受 header；本 SDK 的
+            // avplayer.h / platform klib 也没有 OH_AVMediaSource_CreateWithUrl。
+            // 可选方案：① 本地 HTTP 代理注入头；② ArkTS media.createAVPlayer
+            // 的 header 参数。详见 DengYingOhos/docs/ohos-player-notes.md。
+            Log.w(TAG, "headers ignored: native OH_AVPlayer has no header API ($headersJson)")
         }
 
         val p = OH_AVPlayer_Create()
@@ -179,7 +211,9 @@ class OhosPlayerEngine : PlayerEngine {
                 try {
                     val a = userData?.asStableRef<CallbackAnchor>()?.get() ?: return@staticCFunction
                     if (!a.active || !a.matches(cbPlayer)) return@staticCFunction
-                    a.engine.handleInfo(a, type, body)
+                    // body 只在回调期间有效：在此线程把需要的值全部拷出来，
+                    // 再投主线程处理；不在回调线程改引擎状态。
+                    a.engine.dispatchInfoFromCallback(a, type, body)
                 } catch (t: Throwable) {
                     Log.w(TAG, "onInfo failed: ${t.message}")
                 }
@@ -193,7 +227,7 @@ class OhosPlayerEngine : PlayerEngine {
                 try {
                     val a = userData?.asStableRef<CallbackAnchor>()?.get() ?: return@staticCFunction
                     if (!a.active || !a.matches(cbPlayer)) return@staticCFunction
-                    a.engine.onNativeError(a, code, msg?.toKString() ?: "")
+                    a.engine.dispatchErrorFromCallback(a, code, msg?.toKString() ?: "")
                 } catch (t: Throwable) {
                     Log.w(TAG, "onError failed: ${t.message}")
                 }
@@ -201,9 +235,33 @@ class OhosPlayerEngine : PlayerEngine {
             anchorRef.asCPointer(),
         )
 
+        // AVPlayer 要求 SetVideoSurface 在 Prepare 之前；surface 未到时先出声，
+        // 等 onVideoSurfaceChanged 在 IDLE/INITIALIZED 态补设（见该函数）。
+        val w = videoWindow
+        if (w != null) {
+            val surfaceRet = OH_AVPlayer_SetVideoSurface(p, w)
+            if (surfaceRet != 0u) Log.w(TAG, "SetVideoSurface failed: $surfaceRet")
+        } else {
+            Log.w(TAG, "no video surface yet: audio only until XComponent reports one")
+        }
+
         val ret = OH_AVPlayer_SetURLSource(p, url)
         if (ret != 0u) {
-            notifyError(PlaybackErrorKind.Unknown, ret.toInt(), "SetURLSource failed: $ret")
+            // 失败也必须收尾：释放刚建的 player 与锚点，置错误态并通知，
+            // 否则 PlaybackSession 会停在 Buffering 且 player 泄漏。
+            player = null
+            callbacksAnchor = null
+            generation++
+            state = STATE_ERROR
+            loadedUrl = null
+            playing = false
+            anchorRef.get().active = false
+            releaseScope.launch {
+                val releaseRet = OH_AVPlayer_ReleaseSync(p)
+                if (releaseRet != 0u) Log.w(TAG, "ReleaseSync after SetURLSource failure: $releaseRet")
+                anchorRef.dispose()
+            }
+            notifyError(PlaybackErrorKind.SourceGone, ret.toInt(), "SetURLSource failed: $ret")
             return
         }
         OH_AVPlayer_Prepare(p)
@@ -257,6 +315,7 @@ class OhosPlayerEngine : PlayerEngine {
         wantPlay = false
         loadedUrl = null
         releasePlayer()
+        OhosVideoSurfaceBridge.unregister(this)
         listeners = emptyList()
     }
 
@@ -309,16 +368,40 @@ class OhosPlayerEngine : PlayerEngine {
 
         val anchorRef = callbacksAnchor
         callbacksAnchor = null
-        // 先置失效：release 期间到达的旧回调直接丢弃，不再改引擎状态。
+        // 顺序是硬约束：① 锚点先失效（release 期间到达的旧回调立刻丢弃）
+        // ② 后台 ReleaseSync ③ 返回后 dispose StableRef（否则回调读已释放内存）。
         anchorRef?.get()?.active = false
 
         if (p != null) {
-            // OH_AVPlayer_Release 是异步的（"Releases player resources async"）；
-            // 必须用 API 11 起的 ReleaseSync，返回后旧 player 不再产生回调，
-            // 此时 dispose StableRef 才安全（否则回调里 asStableRef 读已释放内存）。
-            OH_AVPlayer_ReleaseSync(p)
+            // ReleaseSync 会阻塞调用线程（非 idle 时耗时更长），而 setMedia 在
+            // Dispatchers.Main 上调进来 —— 必须移出主线程。这里不等待：新 setMedia
+            // 已用新 player + 新锚点开始，旧 player 的回调因 active=false 被丢弃。
+            releaseScope.launch {
+                val ret = OH_AVPlayer_ReleaseSync(p)
+                if (ret != 0u) Log.w(TAG, "ReleaseSync failed: $ret")
+                anchorRef?.dispose()
+            }
+        } else {
+            anchorRef?.dispose()
         }
-        anchorRef?.dispose()
+    }
+
+    /**
+     * surface 就绪/销毁通知（来自 [OhosVideoSurfaceBridge]）。
+     *
+     * AVPlayer 只允许在 Prepare 之前稳定设置显示面；因此仅当 player 仍处于
+     * IDLE/INITIALIZED 时立即补设，其余情况缓存，等下一次 setMedia 重新 Prepare 时生效。
+     */
+    fun onVideoSurfaceChanged(window: CPointer<OHNativeWindow>?) {
+        videoWindow = window
+        if (window == null) return
+        val p = player ?: return
+        if (state != STATE_IDLE && state != STATE_INITIALIZED) {
+            Log.w(TAG, "surface arrived after Prepare; will apply on next setMedia")
+            return
+        }
+        val ret = OH_AVPlayer_SetVideoSurface(p, window)
+        if (ret != 0u) Log.w(TAG, "late SetVideoSurface failed: $ret")
     }
 
     /** 最近档映射：AVPlaybackSpeed 只有离散档位，取绝对差最小的一档。 */
@@ -341,36 +424,76 @@ class OhosPlayerEngine : PlayerEngine {
         }
     }
 
-    private fun handleInfo(a: CallbackAnchor, type: AVPlayerOnInfoType, body: CPointer<OH_AVFormat>?) {
-        // 旧 player 的迟到事件不得改写新 player 的状态。
-        if (!isCurrent(a)) return
-        when (type.toInt()) {
-            INFO_STATE_CHANGE -> onStateChanged(intOf(body, OH_PLAYER_STATE))
+    /** 回调线程拷出的不可变事件；body 指针不得越过 native 回调作用域。 */
+    private class NativeInfo(
+        val anchor: CallbackAnchor,
+        val type: Int,
+        val state: Int,
+        val duration: Long,
+        val position: Int,
+        val width: Int,
+        val height: Int,
+        val bufferingType: Int,
+        val bufferingValue: Int,
+    )
+
+    /** 在 AVPlayer 回调线程执行：只读 body + 投递主线程，不改任何引擎状态。 */
+    private fun dispatchInfoFromCallback(
+        a: CallbackAnchor,
+        type: AVPlayerOnInfoType,
+        body: CPointer<OH_AVFormat>?,
+    ) {
+        val t = type.toInt()
+        val event = NativeInfo(
+            anchor = a,
+            type = t,
+            state = if (t == INFO_STATE_CHANGE) intOf(body, OH_PLAYER_STATE) else -1,
+            duration = if (t == INFO_STATE_CHANGE || t == INFO_DURATION_UPDATE)
+                longOf(body, OH_PLAYER_DURATION) else -1L,
+            // OH_PLAYER_CURRENT_POSITION 是 int32_t，review 已确认不能用 GetLongValue。
+            position = if (t == INFO_POSITION_UPDATE)
+                intOf(body, OH_PLAYER_CURRENT_POSITION) else -1,
+            width = if (t == INFO_RESOLUTION_CHANGE) intOf(body, OH_PLAYER_VIDEO_WIDTH) else 0,
+            height = if (t == INFO_RESOLUTION_CHANGE) intOf(body, OH_PLAYER_VIDEO_HEIGHT) else 0,
+            bufferingType = if (t == INFO_BUFFERING_UPDATE)
+                intOf(body, OH_PLAYER_BUFFERING_TYPE) else -1,
+            bufferingValue = if (t == INFO_BUFFERING_UPDATE)
+                intOf(body, OH_PLAYER_BUFFERING_VALUE) else -1,
+        )
+        mainScope.launch {
+            // 派发后二次归属校验：排队期间可能已经换集/换源/release。
+            if (!isCurrent(a)) return@launch
+            handleInfo(event)
+        }
+    }
+
+    private fun dispatchErrorFromCallback(a: CallbackAnchor, code: Int, message: String) {
+        mainScope.launch {
+            if (!isCurrent(a)) return@launch
+            onNativeError(code, message)
+        }
+    }
+
+    /** 主线程：状态改写与 listener 通知都在这里发生。 */
+    private fun handleInfo(ev: NativeInfo) {
+        when (ev.type) {
+            INFO_STATE_CHANGE -> onStateChanged(ev.state, ev.duration)
             INFO_DURATION_UPDATE -> {
-                val d = longOf(body, OH_PLAYER_DURATION)
-                if (d > 0L) durationMs = d
+                if (ev.duration > 0L) durationMs = ev.duration
             }
             INFO_POSITION_UPDATE -> {
-                val pos = longOf(body, OH_PLAYER_CURRENT_POSITION)
-                if (pos >= 0L) positionMs = pos
+                if (ev.position >= 0) positionMs = ev.position.toLong()
             }
             INFO_RESOLUTION_CHANGE -> {
-                notify {
-                    it.onVideoSize(
-                        intOf(body, OH_PLAYER_VIDEO_WIDTH),
-                        intOf(body, OH_PLAYER_VIDEO_HEIGHT),
-                    )
-                }
+                notify { it.onVideoSize(ev.width, ev.height) }
             }
             INFO_BUFFERING_UPDATE -> {
                 // AVPLAYER_BUFFERING_START = 1 / AVPLAYER_BUFFERING_END = 2。
-                val bufferingType = intOf(body, OH_PLAYER_BUFFERING_TYPE)
-                if (bufferingType == 1 || bufferingType == 2) {
-                    notify { it.onBuffering(bufferingType == 1) }
+                if (ev.bufferingType == 1 || ev.bufferingType == 2) {
+                    notify { it.onBuffering(ev.bufferingType == 1) }
                 } else {
                     // PERCENT / CACHED_DURATION：按百分比兜底（1..99 = 缓冲中）。
-                    val percent = intOf(body, OH_PLAYER_BUFFERING_VALUE)
-                    if (percent in 1..99) notify { it.onBuffering(true) }
+                    if (ev.bufferingValue in 1..99) notify { it.onBuffering(true) }
                 }
             }
             // EOS 与 STATE_CHANGE(COMPLETED) 都可能到，交给 completedNotified 去重。
@@ -397,11 +520,13 @@ class OhosPlayerEngine : PlayerEngine {
         }
     }
 
-    private fun onStateChanged(rawState: Int) {
+    private fun onStateChanged(rawState: Int, bodyDuration: Long) {
         state = rawState
         when (rawState) {
             STATE_PREPARED -> {
-                durationMs = duration
+                // 优先用 STATE_CHANGE body 里的时长，避免在回调路径上重入
+                // OH_AVPlayer_GetDuration（review 建议）。
+                durationMs = if (bodyDuration > 0L) bodyDuration else duration
                 notify { it.onReady(durationMs) }
                 player?.let { applyPendingSeek(it) }
                 if (wantPlay) player?.let { OH_AVPlayer_Play(it) }
@@ -423,9 +548,9 @@ class OhosPlayerEngine : PlayerEngine {
         }
     }
 
-    private fun onNativeError(a: CallbackAnchor, code: Int, message: String) {
-        if (!isCurrent(a)) return
+    private fun onNativeError(code: Int, message: String) {
         playing = false
+        state = STATE_ERROR
         notifyError(classify(code, message), code, message)
     }
 

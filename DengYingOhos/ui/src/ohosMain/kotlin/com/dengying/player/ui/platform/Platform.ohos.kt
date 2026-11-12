@@ -4,8 +4,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import com.dengying.player.player.OhosPlayerEngineHost
+import com.dengying.player.player.OhosVideoSurfaceBridge
 import com.dengying.player.player.PlayerEngine
 
 /**
@@ -17,11 +25,19 @@ import com.dengying.player.player.PlayerEngine
  */
 
 /**
- * 画面承载待接 ArkUI XComponent 互操作（ui-ohos klib 的 insertInteropView 路径）：先黑底占位。
+ * 画面承载：ArkTS 壳在 Compose 下方铺了一层全屏 XComponent（ComposePage.ets），
+ * surfaceId 经 NAPI → [OhosVideoSurfaceBridge] → `OH_AVPlayer_SetVideoSurface`。
  *
- * TODO(播放器 WIP)：native AVPlayer 已能出声（见 shared 的 OhosPlayerEngine），
- * 但还没有 surfaceId 通道 —— 需要 ArkTS 侧 XComponent 的 surfaceId 经 NAPI 传进来，
- * 再调 `OH_NativeWindow_CreateNativeWindowFromSurfaceId` + `OH_AVPlayer_SetVideoSurface`。
+ * 本 actual 不再自己建视图，只负责：
+ * - 组合进入/退出时驱动 `OhosPlayerEngineHost.surfaceActive/Inactive`
+ *   （计数归零只暂停，不释放）；
+ * - 订阅 surface 就绪状态，未就绪时画黑底、就绪后透明，让下层的 XComponent
+ *   画面透出来；
+ * - 通过 `onBind` 上报绑定状态。
+ *
+ * 已知限制（WIP）：XComponent 是全屏的，视频会铺满窗口而不是 Compose 布局里
+ * 的播放器框。要精确对齐需要在 Compose 里插入 interop 视图（CMP ui-ohos 的
+ * insertInteropView 路径），当前播放页/内嵌位复用时位置会不一致。
  */
 @Composable
 actual fun VideoSurface(
@@ -29,7 +45,26 @@ actual fun VideoSurface(
     modifier: Modifier,
     onBind: (bound: Boolean) -> Unit,
 ) {
-    Box(modifier.fillMaxSize().background(Color.Black))
+    var surfaceReady by remember { mutableStateOf(OhosVideoSurfaceBridge.isReady()) }
+
+    DisposableEffect(engine) {
+        if (engine != null) OhosPlayerEngineHost.surfaceActive()
+        val listener: (Boolean) -> Unit = { surfaceReady = it }
+        OhosVideoSurfaceBridge.addReadyListener(listener)
+        onDispose {
+            OhosVideoSurfaceBridge.removeReadyListener(listener)
+            if (engine != null) OhosPlayerEngineHost.surfaceInactive()
+        }
+    }
+
+    val bound = engine != null && surfaceReady
+    LaunchedEffect(bound) { onBind(bound) }
+
+    Box(
+        modifier
+            .fillMaxSize()
+            .background(if (bound) Color.Transparent else Color.Black)
+    )
 }
 
 /** 窗口方向/系统栏控制待接 ohos window API：先空实现（enter/exit 幂等、不抛，符合契约 3）。 */
