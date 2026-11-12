@@ -1,6 +1,7 @@
 package com.dengying.player.ui.viewmodel
 
 import com.dengying.player.data.net.HlsUtil
+import com.dengying.player.domain.playback.HlsVariants
 import com.dengying.player.data.source.SourceRepository
 import com.dengying.player.data.store.Store
 import com.dengying.player.playback.PlaybackSession
@@ -48,6 +49,9 @@ class PlayerViewModelEngineTest {
     private companion object {
         const val OLD_URL = "http://old.example/master.m3u8"
         const val NEW_URL = "http://old.example/1080p.m3u8"
+        const val EP1_URL = "http://old.example/ep1.m3u8"
+        /** token 源的换集入口地址：未经源适配器换链，绝不能交给引擎。 */
+        const val RAW_TOKEN = "C0ffeeToken123"
     }
 
     /**
@@ -164,6 +168,83 @@ class PlayerViewModelEngineTest {
             assertEquals(42_000L, call.third, "换档必须保留原进度")
             assertNotNull(vm.engine, "换档后引擎必须重新挂上，不能停在 null（黑屏）")
             assertEquals(NEW_URL, vm.state.selectedVariant)
+        } finally {
+            vm.stopProgressLoopForTest()
+        }
+    }
+
+    @Test
+    fun `换集解析窗口内换档失败不得把原始 token 交给引擎`() = runTest(timeout = 20.seconds) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val engine = RecordingEngine()
+        val vm = newVm(engine, { failProbe() }, epUrls = listOf(OLD_URL, RAW_TOKEN))
+        vm.attachEngine()
+
+        try {
+            vm.primeEngineForTest(OLD_URL)
+            runCurrent()
+            val before = engine.setMediaCalls.size
+
+            // 换到第二集：resolvedUrl 先被写成原始 token，解析尚未完成
+            vm.switchEpisode(1)
+            runCurrent()
+            assertEquals(1, vm.state.curEpIndex)
+
+            // 解析窗口内用户换档且探测失败：只能走 resolveUrl()，不得回退 token
+            vm.applyQuality(NEW_URL)
+            runCurrent()
+
+            assertEquals(
+                before,
+                engine.setMediaCalls.size,
+                "解析窗口内换档失败不得 setMedia 任何未解析地址",
+            )
+            assertTrue(
+                engine.setMediaCalls.none { it.first == RAW_TOKEN },
+                "原始 epUrl/token 绝不能交给引擎（会 2001 死循环）",
+            )
+        } finally {
+            vm.stopProgressLoopForTest()
+        }
+    }
+
+    @Test
+    fun `换集清空旧变体且拒绝旧档位的 applyQuality`() = runTest(timeout = 20.seconds) {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val engine = RecordingEngine()
+        val vm = newVm(engine, { okProbe() }, epUrls = listOf(OLD_URL, EP1_URL))
+        vm.attachEngine()
+
+        try {
+            vm.primeEngineForTest(OLD_URL)
+            runCurrent()
+            val oldVariant = "http://old.example/ep0-720p.m3u8"
+            vm.primeVariantsForTest(
+                listOf(
+                    HlsVariants.Variant(1_800_000, "1280x720", 720, oldVariant),
+                    HlsVariants.Variant(800_000, "854x480", 480, "http://old.example/ep0-480p.m3u8"),
+                ),
+            )
+            assertTrue(vm.showQualityEntry, "多码率清单应显示清晰度入口")
+
+            vm.switchEpisode(1)
+            runCurrent()
+
+            assertTrue(vm.state.variants.isEmpty(), "换集必须清空上一集的档位清单")
+            assertEquals("", vm.state.selectedVariant, "换集必须清空选中的旧档位")
+            assertFalse(vm.showQualityEntry, "换集必须关闭清晰度入口")
+            assertFalse(vm.state.showQualitySheet, "换集必须关闭清晰度面板")
+
+            val before = engine.setMediaCalls.size
+            vm.applyQuality(oldVariant)
+            runCurrent()
+
+            assertEquals(before, engine.setMediaCalls.size, "换集后旧档位不得再触发 setMedia")
+            assertTrue(
+                engine.setMediaCalls.none { it.first == oldVariant },
+                "旧集的媒体地址绝不能写进新集会话",
+            )
+            assertEquals("", vm.state.selectedVariant, "被拒绝的旧档位不得改选中项")
         } finally {
             vm.stopProgressLoopForTest()
         }
@@ -350,6 +431,12 @@ class PlayerViewModelEngineTest {
     private fun newVm(
         engine: PlayerEngine,
         probe: suspend (String) -> HlsUtil.ReachResult,
+    ): PlayerViewModel = newVm(engine, probe, emptyList())
+
+    private fun newVm(
+        engine: PlayerEngine,
+        probe: suspend (String) -> HlsUtil.ReachResult,
+        epUrls: List<String>,
     ): PlayerViewModel = PlayerViewModel(
         params = PlayerViewModel.PlayerParams(
             url = OLD_URL,
@@ -363,8 +450,8 @@ class PlayerViewModelEngineTest {
             episodeIndex = 0,
             episodeName = "",
             altUrls = emptyList(),
-            epUrls = emptyList(),
-            epNames = emptyList(),
+            epUrls = epUrls,
+            epNames = if (epUrls.isEmpty()) emptyList() else epUrls.indices.map { "第${it + 1}集" },
         ),
         repo = SourceRepository(),
         store = Store(FakeKeyValueStore()),

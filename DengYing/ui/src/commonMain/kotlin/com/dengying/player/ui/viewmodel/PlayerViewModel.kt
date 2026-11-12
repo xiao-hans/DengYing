@@ -256,7 +256,8 @@ class PlayerViewModel(
         override fun onCompleted() {
             progressLoop.stop()
             state = state.copy(isPlaying = false)
-            viewModelScope.launch { onCompleted() }
+            // 显式限定接收者：监听器自身也有 onCompleted，隐式解析会递归调用自己。
+            viewModelScope.launch { this@PlayerViewModel.onCompleted() }
         }
 
         override fun onError(kind: PlaybackErrorKind, code: Int, message: String) {
@@ -337,6 +338,13 @@ class PlayerViewModel(
 
     private var resolvedUrl = params.url
     private var resolvedHeaders = ""
+    /**
+     * 变体清单所属的集序号（-1 = 从未加载）。
+     *
+     * 换集只清空列表、不清这个标记：旧集的档位必须能被 [applyQuality] 认出来并拒绝，
+     * 否则点击旧档位会把上一集的媒体地址交给新集会话。
+     */
+    private var variantsEpIndex: Int = -1
     private var engineReady = false
     private var urlReady = false
     private var starting = false
@@ -380,6 +388,7 @@ class PlayerViewModel(
                     )
                     urlReady = true
                     startedUrl = s.url
+                    startedHeaders = s.headers
                     resolvedUrl = s.url
                     resolvedHeaders = s.headers
                     state = state.copy(
@@ -467,6 +476,7 @@ class PlayerViewModel(
                 // 换集后路由请求头属于上一集，不能沿用到新地址
                 resolvedHeaders = if (switching) "" else params.headersJson
                 startedUrl = ""
+                startedHeaders = ""
                 urlReady = true
                 state = state.copy(status = "正在准备…")
                 refreshCastability()
@@ -499,6 +509,7 @@ class PlayerViewModel(
             // 而 `startedUrl` 保留上次的值，两者不再相等 → 幂等判据放行 →
             // **重复 setMedia 同一地址**，表现为"进度条和播放失败一起来"。
             startedUrl = ""
+            startedHeaders = ""
             state = state.copy(status = "正在解析播放地址…")
 
             // AH 多协议源：token 型地址先经源适配器换出真实媒体地址，并带回播放所需请求头
@@ -712,6 +723,8 @@ class PlayerViewModel(
      */
     private fun startBackgroundVariants(url: String) {
         viewModelScope.launch {
+            // 抓取开始时的集序号：解析往返期间用户可能换集，结果只能归当前集。
+            val epIndex = state.curEpIndex
             try {
                 val t0 = Clock.nowMs()
                 val variants = kotlinx.coroutines.withContext(ioDispatcher) {
@@ -722,12 +735,14 @@ class PlayerViewModel(
                     "elapsed=${Clock.nowMs() - t0} count=${variants.size}",
                 )
                 // 地址已变（换集/换线/换档）→ 本次结果作废
-                if (HlsVariants.isStale(url, resolvedUrl)) {
-                    PlaybackProbe.note("bg-variants-stale", "urlChanged=true")
+                // 地址或集变了 → 本次结果作废，避免把上一集的档位盖到当前集
+                if (HlsVariants.isStale(url, resolvedUrl) || epIndex != state.curEpIndex) {
+                    PlaybackProbe.note("bg-variants-stale", "urlChanged=${HlsVariants.isStale(url, resolvedUrl)}")
                     return@launch
                 }
                 // 先写判据再写状态：`showQualityEntry` 是普通字段，靠随后的
                 // `state` 更新触发重组才能被读到
+                variantsEpIndex = epIndex
                 showQualityEntry = HlsVariants.shouldShowPicker(variants)
                 state = state.copy(
                     variants = variants,
@@ -961,6 +976,7 @@ class PlayerViewModel(
                 eng.setSpeed(state.speed)
                 eng.play()
                 startedUrl = targetUrl
+                startedHeaders = targetHeaders
                 // 【会话登记（FR-711 不变量）】本页自主起播不经过 PlaybackSession.play，
                 // 会话单例此前一直 Idle/urlEmpty——返回详情页时 resumeInlineIfPlaying 与
                 // 详情页全屏键的 hasSession 检查全部静默失效（docs/05 §9.8）。
@@ -1005,6 +1021,9 @@ class PlayerViewModel(
      * 换集/换档时会被重置（那时地址变了，需要重新 setMedia）。
      */
     private var startedUrl: String = ""
+
+    /** 与 [startedUrl] 成对：真正交给引擎的请求头。回退时必须一起恢复，不能只还地址。 */
+    private var startedHeaders: String = ""
 
     // ---------------- 当前集三元组（FR-415：换集后不得沿用路由初值） ----------------
 
@@ -1255,6 +1274,20 @@ class PlayerViewModel(
      */
     fun applyQuality(url: String) {
         if (url.isEmpty() || url == state.selectedVariant) return
+        // 【阻断修复】档位归属校验：变体清单属于某个集，换集后旧集的档位必须拒绝。
+        // 否则会把上一集的媒体地址 setMedia 给新集（会话里就出现"新集序号 + 旧集地址"）。
+        if (variantsEpIndex != -1 && variantsEpIndex != state.curEpIndex) {
+            PlaybackProbe.note(
+                "quality-reject-stale-episode",
+                "variantEp=$variantsEpIndex curEp=${state.curEpIndex}",
+            )
+            return
+        }
+        // 清单存在时只接受清单内的地址：防止 UI 持旧列表在换集后再次提交。
+        if (state.variants.isNotEmpty() && state.variants.none { it.url == url }) {
+            PlaybackProbe.note("quality-reject-unknown-variant", "len=${url.length}")
+            return
+        }
         // 【单 Job + 代际】连点换档时，旧探测必须作废：
         // 否则最后完成的 probe 会成为赢家（而不是最后点击的档位），
         // 且旧探测失败还会用 previousVariant 覆盖用户的新选择。
@@ -1263,11 +1296,21 @@ class PlayerViewModel(
         switchTried = false
         val keep = state.curTime
         val keepTotal = state.totalTime
-        // 回退目标必须是**已交给引擎的地址**。换集与换档交叠时 resolvedUrl
-        // 可能刚被写成原始 epUrl/token（尚未解析），绝不能原样回退给引擎。
-        val previousUrl = if (startedUrl.isNotEmpty()) startedUrl else resolvedUrl
+        // 【阻断修复】回退目标只允许是**已真正起播**的地址（startedUrl/startedHeaders 成对）。
+        // 换集与换档交叠时 resolvedUrl 可能刚被写成原始 epUrl/token（尚未解析），
+        // 绝不能原样回退给引擎：token 源会 2001 死循环，非 token 源会把分享页 HTML
+        // 塞进播放器（resolveUrl 的协议校验也被绕过）。
+        val previousUrl = startedUrl
+        val previousHeaders = startedHeaders
         val previousVariant = state.selectedVariant
-        state = state.copy(showQualitySheet = false, selectedVariant = url, status = "正在切换清晰度…")
+        state = state.copy(
+            showQualitySheet = false,
+            selectedVariant = url,
+            status = "正在切换清晰度…",
+            // 换档会重走起播路径；旧错误浮层必须先清，否则「重试」按钮仍可点，
+            // 两条起播路径会互相覆盖。
+            errMsg = "",
+        )
 
         qualitySwitchJob = viewModelScope.launch {
             // 显式保证主线程：ExoPlayer 的 API 全部要求主线程（真机踩过 wrong-thread 异常）
@@ -1307,7 +1350,8 @@ class PlayerViewModel(
                     // 由 startEngine 消费并交给 setMedia，换档后从原进度继续。
                     pendingResumeMs = keep
                 } else if (previousUrl.isEmpty()) {
-                    // 没有可回退的已解析地址：留给解析链，不能把未解析地址交给引擎。
+                    // 没有真正起播过的地址可回退：交给解析链按**当前集**重新解析。
+                    // 不能拿 resolvedUrl 兜底——换集窗口里它可能还是原始 epUrl/token。
                     state = state.copy(
                         selectedVariant = previousVariant,
                         curTime = keep,
@@ -1326,6 +1370,8 @@ class PlayerViewModel(
                     // onReady，所以必须在这里把错误态收敛干净：清 errMsg、恢复 prepared
                     // 与时长，只留一条几秒后自动消失的轻提示，不能常驻错误浮层。
                     resolvedUrl = previousUrl
+                    // 地址与请求头必须成对恢复；只还地址会让 token 型源丢头后 403。
+                    resolvedHeaders = previousHeaders
                     urlReady = true
                     pendingResumeMs = keep
                     state = state.copy(
@@ -1441,9 +1487,20 @@ class PlayerViewModel(
                 curEpIndex = target,
                 title = if (params.vodName.isNotEmpty()) "${params.vodName} $epName" else epName,
                 buffering = false,
+                // 【阻断修复】旧集的档位清单/选中项必须立刻作废并关面板，
+                // 否则解析期间用户还能点到上一集的清晰度。
+                variants = emptyList(),
+                selectedVariant = "",
+                showQualitySheet = false,
             )
+            showQualityEntry = false
+            // variantsEpIndex 故意保留：它标记"旧清单属于哪一集"，
+            // applyQuality 靠它拒绝换集后残留的旧档位点击。
             resolvedUrl = epUrl
             resolvedHeaders = ""
+            // bindEngine(null) 后这地址已不在引擎里；换集后它也不再属于当前集。
+            startedUrl = ""
+            startedHeaders = ""
             pendingResumeMs = 0
             resumeRestoreRequested = false
             manualSeekOccurred = false
@@ -1494,13 +1551,18 @@ class PlayerViewModel(
 
     /** 重试：区分失败阶段——解析/探测失败重走全链路；播放器错误只重建引擎 */
     fun retry() {
+        // 重试是全链路重新起播：进行中的换档探测必须作废（代际 +1），
+        // 否则旧探测返回后会覆盖重试结果。
+        qualitySwitchJob?.cancel()
+        qualitySwitchSeq++
         switchTried = false
         state = state.copy(errMsg = "", status = "正在重试…", prepared = false)
         viewModelScope.launch {
             // 显式保证主线程：ExoPlayer 的 API 全部要求主线程（真机踩过 wrong-thread 异常）
             engineHost.surfaceInactive()
             bindEngine(null)
-            starting = false
+            // 不直接 starting=false：startEngine 用代际管理该标志，
+            // 手工复位会让在飞的起播提前解锁并二次 setMedia。
             if (urlReady) startEngine() else resolveUrl()
         }
     }
@@ -1535,6 +1597,16 @@ class PlayerViewModel(
      */
     internal fun stopProgressLoopForTest() {
         progressLoop.stop()
+    }
+
+    /** 仅供 `:ui:jvmTest`：注入变体清单，模拟后台抓取完成（抓取本身依赖网络）。 */
+    internal fun primeVariantsForTest(variants: List<com.dengying.player.domain.playback.HlsVariants.Variant>) {
+        variantsEpIndex = state.curEpIndex
+        showQualityEntry = HlsVariants.shouldShowPicker(variants)
+        state = state.copy(
+            variants = variants,
+            selectedVariant = variants.firstOrNull()?.url ?: "",
+        )
     }
 
     /** 仅供 `:ui:jvmTest`：走一次真实的 startEngine 路径（解析链依赖网络，测试不可用）。 */
