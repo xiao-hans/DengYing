@@ -53,7 +53,8 @@ import com.dengying.player.ui.theme.Palette
  * ## 三条设计约束
  *
  * 1. **占位常驻**：未选剧集时显示空态（而不是不渲染），这样用户知道"这里能播"。
- * 2. **控制栏只有三件套**：进度条 + 暂停键 + 全屏键。**没有**倍速/上下集/连播/投屏。
+ * 2. **控制栏保持精简**：进度条 + 上/下一集 + 暂停键 + 全屏键。
+ *    v1.3.2 按用户反馈补了上/下一集（"没有上下集按钮功能"）；仍**没有**倍速/连播/投屏。
  * 3. **不区分设备类型**：手机与平板用同一套版式（用户明确要求）。
  *    内嵌位尺寸由详情页版式决定（16:9 宽高比），与设备类型无关。
  *
@@ -102,8 +103,13 @@ fun InlinePlayer(
      * 视觉上无跳变，也不会让上方内容突然上移）。
      */
     hidden: Boolean = false,
+    /** 上/下一集是否可切；false 时按钮置灰（首集/末集）。 */
+    canPrev: Boolean = false,
+    canNext: Boolean = false,
     onTogglePlay: () -> Unit,
     onSeek: (Long) -> Unit,
+    onPrev: () -> Unit = {},
+    onNext: () -> Unit = {},
     onEnterFullscreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -458,9 +464,23 @@ fun InlinePlayer(
 
                 Spacer(Modifier.width(4.dp))
                 InlineIconButton(
+                    icon = DyIcons.SkipPrevious,
+                    label = "上一集",
+                    enabled = canPrev,
+                    onClick = onPrev,
+                )
+                Spacer(Modifier.width(4.dp))
+                InlineIconButton(
                     icon = if (isPlaying) DyIcons.Pause else DyIcons.Play,
                     label = if (isPlaying) "暂停" else "播放",
                     onClick = onTogglePlay,
+                )
+                Spacer(Modifier.width(4.dp))
+                InlineIconButton(
+                    icon = DyIcons.SkipNext,
+                    label = "下一集",
+                    enabled = canNext,
+                    onClick = onNext,
                 )
                 Spacer(Modifier.width(4.dp))
                 InlineIconButton(
@@ -497,17 +517,26 @@ private fun fmtTime(ms: Long): String {
  * 24dp 的热区里实际笔画只有十几 dp，且不同设备字重不一致。
  */
 @Composable
-private fun InlineIconButton(icon: DyIcon, label: String, onClick: () -> Unit) {
+private fun InlineIconButton(
+    icon: DyIcon,
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .size(34.dp)
-            .background(Color.White.copy(alpha = 0.12f), CircleShape)
-            .clickable(onClick = onClick),
+            .background(
+                Color.White.copy(alpha = if (enabled) 0.12f else 0.06f),
+                CircleShape,
+            )
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         DyIcon(
             icon = icon,
-            tint = Color.White,
+            // 禁用态压暗但不隐藏：用户要能看出"有上一集/下一集这个能力"
+            tint = Color.White.copy(alpha = if (enabled) 1f else 0.35f),
             size = 19.dp,
             contentDescription = label,
         )

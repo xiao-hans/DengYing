@@ -32,6 +32,16 @@ data class GlassScheme(
     val liquidTint: Color,
     /** 玻璃边线 */
     val border: Color,
+    /**
+     * 主按钮（登录 / 搜索）的填充。
+     *
+     * 与 [fill] 分开是因为主按钮叠在同样是玻璃的输入框上：两边都用 60% 白时，
+     * 实测只差 1~2 个色阶，按钮轮廓完全消失。主按钮要近实底（浅色近白、深色亮一档），
+     * 靠描边与投影跟输入框拉开，而不是靠染色。
+     */
+    val actionFill: Color,
+    /** 主按钮上的文字色：与 [actionFill] 成对，保证对比度 */
+    val actionText: Color,
     /** 悬浮投影颜色——配合 GlassSurface 的 elevation */
     val shadow: Color,
     /** chip/按钮 未选中填充 */
@@ -40,30 +50,64 @@ data class GlassScheme(
     val chipSelectedFill: Color,
     /** Dock 选中项背后的滑动高光面板 */
     val dockHighlight: Color,
+    /**
+     * 静态玻璃面左上高光的峰值 alpha（`GlassSurface` 退化/静态分支用）。
+     *
+     * 【为什么必须是 token】v1.3.0 之前这里硬编码 `if (fill.luminance() < 0.5f) 0.10f else 0.34f`，
+     * 判据是「fill 自身亮不亮」——但深色主题下 fill 是**低 alpha 白**
+     * （`0x1CFFFFFF`，luminance≈0.11 但实际叠加后是深色），被判成暗色给 0.10f 高光，
+     * 叠加在深色柔光底上仍然把卡片整体抬亮一档，副文本压不住。
+     * 高光强度取决于**主题**，不取决于 fill 的算术亮度，所以提升为 token。
+     */
+    val sheenAlpha: Float,
 )
 
 val LightGlass = GlassScheme(
-    fill = Color(0xD9FFFFFF),
-    fillStrong = Color(0xF0FFFFFF),
+    // v5 磨砂（对齐 vivo OriginOS 组件的观感）：v4 把静态面压到 42% 白追求"透"，
+    // 结果用户看到的是"几乎透明的塑料片"——底色一冲就没了玻璃的体感。
+    // 磨砂玻璃的正解是「白面够实 + 模糊够浅」：60% 白保证有面，模糊 12dp 保证
+    // 背后内容还认得出形状。太透（<45%）像塑料膜，太实（>75%）又变回白卡。
+    fill = Color(0x99FFFFFF),
+    fillStrong = Color(0xC7FFFFFF),
     darkFill = Color(0x73000000),
-    liquidTint = Color(0x2EFFFFFF),
-    border = Color(0x140C0C09),
+    // 采样路径的补色 40% 白。
+    // 【取值理由】24% 时海报细节在玻璃里还能读出来（用户：不要做透明）；
+    // 55% 以上背后只剩一片白雾（不要很模糊）。40% 是「能看出这里有一张图、
+    // 但读不清图上的字」的分界，正对 vivo 系统组件的磨砂厚度。
+    liquidTint = Color(0x66FFFFFF),
+    // 边线 14% 黑在近白底上只差 5 个色阶，真机上看不出边界。
+    // 提到 28% 后，输入框与卡片在 rgb(246) 的底上有一条可辨的灰线。
+    border = Color(0x6E0C0C09),
+    // 主按钮近白实底：输入框是 60% 白玻璃，按钮必须再实一档才有轮廓
+    actionFill = Color(0xF2FFFFFF),
+    actionText = Color(0xFF0C0C09),
     shadow = Color(0x1A0C0C09),
-    chipFill = Color(0x99FFFFFF),
-    chipSelectedFill = Color(0xF2FFFFFF),
-    dockHighlight = Color(0xE6FFFFFF),
+    chipFill = Color(0x5CFFFFFF),
+    chipSelectedFill = Color(0xCCFFFFFF),
+    dockHighlight = Color(0xD9FFFFFF),
+    sheenAlpha = 0.30f,
 )
 
 val DarkGlass = GlassScheme(
-    fill = Color(0x1FFFFFFF),
-    fillStrong = Color(0xF0FFFFFF),
+    // 深色同理：白面 18%（v4 是 10%）——纯靠模糊的暗玻璃在深色底上会糊成一团，
+    // 需要一层白霜把边缘与层次"提"出来。
+    // 【v1.3.0 实测回调】18% 在深色底上把卡片抬到 rgb(140,137,154)，
+    // 而副文本 textSecondary 是 rgb(155,155,147)——两者几乎同亮度，
+    // 「登录两个BT 解锁 4K 高清线路」直接糊在卡片里。压到 11% 后卡片落回
+    // rgb(≈96,92,108)，与副文本拉开一档，同时仍比页面底亮，玻璃层次不丢。
+    fill = Color(0x1CFFFFFF),
+    fillStrong = Color(0xC7FFFFFF),
     darkFill = Color(0x73000000),
-    liquidTint = Color(0x1AFFFFFF),
-    border = Color(0x26FFFFFF),
+    liquidTint = Color(0x1CFFFFFF),
+    border = Color(0x3DFFFFFF),
+    // 主按钮亮一档：深色输入框只有 11% 白，按钮用 24% 白才看得见边界
+    actionFill = Color(0x3DFFFFFF),
+    actionText = Color(0xFFF2F2EE),
     shadow = Color(0x66000000),
-    chipFill = Color(0x14FFFFFF),
-    chipSelectedFill = Color(0x30FFFFFF),
-    dockHighlight = Color(0x26FFFFFF),
+    chipFill = Color(0x2EFFFFFF),
+    chipSelectedFill = Color(0x52FFFFFF),
+    dockHighlight = Color(0x3DFFFFFF),
+    sheenAlpha = 0.06f,
 )
 
 /** 当前主题的玻璃方案，由 [com.dengying.player.ui.theme.DengYingTheme] 提供。 */
@@ -76,8 +120,11 @@ object Glass {
     val DarkFill: Color @Composable get() = LocalGlassScheme.current.darkFill
     val LiquidTint: Color @Composable get() = LocalGlassScheme.current.liquidTint
     val Border: Color @Composable get() = LocalGlassScheme.current.border
+    val ActionFill: Color @Composable get() = LocalGlassScheme.current.actionFill
+    val ActionText: Color @Composable get() = LocalGlassScheme.current.actionText
     val Shadow: Color @Composable get() = LocalGlassScheme.current.shadow
     val ChipFill: Color @Composable get() = LocalGlassScheme.current.chipFill
     val ChipSelectedFill: Color @Composable get() = LocalGlassScheme.current.chipSelectedFill
     val DockHighlight: Color @Composable get() = LocalGlassScheme.current.dockHighlight
+    val SheenAlpha: Float @Composable get() = LocalGlassScheme.current.sheenAlpha
 }
