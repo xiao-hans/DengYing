@@ -50,6 +50,7 @@
 - 依赖方向以 `docs/03` 为准：`ui → app（页面取组合根）`、`ui → playback → data → core`；`app` 不依赖 `ui`，下层不反向依赖上层。
 - ViewModel 通过构造函数收依赖，**不摸 `DengYingApp.get()`**；只在页面层装配。
 - 播放器 API 类型不得穿过 `playback` 暴露给页面，窄口子按现有 `Engine` 契约走。
+- **播放会话唯一事实源**：`PlaybackSession`（`shared/.../playback/PlaybackSession.kt`）持有播放状态；详情页内嵌 `InlinePlayer` 与全屏 `PlayerScreen` 都只是它的视图，详情页「播」角标由会话 `episodeIndex` 推导（vodId+source 校验）。换集走 `PlayerViewModel` 的当前集三元组（`currentUrl` / `currentEpName` / `epStartAtMs` + `resumeSuppressed`）：`resolveUrl()` 不得回退到路由 `params.url`，换集起播位归零并抑制历史续播（历史按 vodId+source 存，不分集）。token 型源换链返回空 url 时不得把令牌交给引擎（会 2001 死循环）。
 - 所有网络请求走统一 `HttpClient` / 平台传输契约；不能在每个适配器里另建出网通道。
 - 源清单为编译期常量（当前不做在线源市场）。不要擅自引入账号、埋点、推荐或内容库。
 - 不引入第三方 SDK 或替换网络栈，除非任务明确要求且给出体积、安全、维护成本评估（SEC-001）。
@@ -73,12 +74,12 @@ Select-String -Path 'ui/src/commonMain/kotlin/com/dengying/player/ui/viewmodel/*
 
 ## 2. 本机命令纪律
 
-- 本机是 Windows，工作区使用 Windows 原生路径，例如 `D:\workspace\dengY\DengYing`。命令必须用 PowerShell 7（`pwsh`）执行，不要在 WSL、bash、sh 或 zsh 里执行。
+- 本机是 Windows，工作区使用 Windows 原生路径，例如 `D:\workspace\dengY\DengYing`。Codex 等终端 Agent 用 PowerShell 7（`pwsh`）执行；Claude Code 的 Bash 工具即 Git Bash，同样可用，但 adb 设备路径有 MSYS 改写问题（见 §4.1）。不要用 WSL。
 - 不要使用 `/mnt/d/...` 之类的 WSL 路径。传入的工具工作目录已经是正确的项目目录，直接执行 `rtk <命令>`，不要再次拼接或复制项目目录。
 - 所有 shell 命令都加 `rtk` 前缀。RTK 没有专用子命令时，使用 `rtk proxy pwsh -NoProfile -Command '<命令>'`。RTK 已位于 Windows 的 PATH 中，不需要使用 Linux 的绝对路径。
 - 构建、测试和常用 Git 操作优先使用 RTK 子命令，例如 `rtk gradlew :shared:jvmTest`、`rtk git status`。含特殊字符的长文本使用 PowerShell 原生命令写入，不要使用 bash heredoc。
 - 控制台回显中文可能乱码，不代表文件内容损坏；以读回文件为准。
-- 运行 Gradle 前先确认 `JAVA_HOME`。本机脚本以 JDK 18 验证；不要用默认 JDK 8 配置。
+- 运行 Gradle 前先确认 `JAVA_HOME`。本机脚本以 JDK 18 验证；不要用默认 JDK 8 配置。JDK 路径固定为 `C:Program FilesJavajdk-18.0.2.1`（Git Bash：`export JAVA_HOME="/c/Program Files/Java/jdk-18.0.2.1"`）。用默认 JDK 8 会在解析 AGP 时失败：`Dependency requires at least JVM runtime version 11. This build uses a Java 8 JVM.`
 - 构建和测试产物已被忽略，不要提交 `build/`、`.gradle/`、`ohos-build/build/`、`.idea/`、`.tmp/`。
 - 用户未要求时不要提交、推送、改签、删除分支或清理未跟踪文件。
 
@@ -106,6 +107,7 @@ Select-String -Path 'ui/src/commonMain/kotlin/com/dengying/player/ui/viewmodel/*
 | 跨模块或交付前 | `runscript/full-check.sh` 或等价逐步验证 | 检查 BUILD 成功、无新增 `e:` / `FAILED` |
 | `ohosMain` / NAPI / ArkTS | `rtk gradlew --project-dir ohos-build :compileKotlinOhosArm64 --console=plain` 加 HAP 构建 | 按 `harmony/README.md` 的装机纪律验证生效 |
 | iOS 共享代码 | `:shared` 的 iOS 编译（Windows 可到 klib） | 链接、Xcode 构建和运行只能在 macOS 验证 |
+| 真机复验（Android） | `./tools/adbx.sh install` → `restart` → `probe` | 截图（`shot`）与探针行作为证据，附路径/关键行；命令口径见 §4.1 |
 | 发布/文档验收 | 与任务相关命令的实际输出 | 更新 `docs/04` / `docs/05` 对应条目 |
 
 验证规则：
@@ -115,6 +117,28 @@ Select-String -Path 'ui/src/commonMain/kotlin/com/dengying/player/ui/viewmodel/*
 - 只被 `@Ignore` 跳过、没有执行的测试不能算覆盖；真机测试不能拿 JVM 结果冒充。
 - UI 截图、HAP/APK 安装结果、hilog/dumpLayout、Xcode 输出都是证据，附路径或关键行。
 - 全量验证优先 `runscript/full-check.sh`；需要逐项测试统计时再运行 `runscript/counts.sh`。脚本自身的 JDK/路径已固定，运行前确认文件仍存在，脚本过期就先修脚本或说明。
+
+### 4.1 真机验证（Android）
+
+设备：vivo V2419A（无线 adb，序列号由 `tools/adbx.sh` 固定，可用 `DY_SERIAL` 覆盖），横屏 2640x1216，debug 包 `com.dengying.player.debug`。
+
+```bash
+./tools/adbx.sh install        # 装 app/build/outputs/apk/debug/app-debug.apk
+./tools/adbx.sh restart        # force-stop + am start MainActivity
+./tools/adbx.sh probe 30       # tail files/playback.log（N 行）
+./tools/adbx.sh probe-all      # 全量探针
+./tools/adbx.sh reset          # 清空探针
+./tools/adbx.sh shot ep2       # 截图存 docs/screens/ 当日目录/ep2.png
+./tools/adbx.sh play "http://...m3u8" 47519515 tv189 "标题" 0   # DEBUG_PLAY 广播，仅 debug 包
+```
+
+- Git Bash 下 adb 的**设备路径**会被 MSYS 改写（`/sdcard/x` 变成 `D:/Git/sdcard/x`）：`adb shell` / `pull` / `push` 前 `export MSYS_NO_PATHCONV=1`。`adb install` 相反——该变量会让 adb.exe 拿到 `/d/...` 形式的路径而报 `failed to stat ...: No such file or directory`。
+- vivo 安装器会弹「外部来源应用」确认页，`adb install` 一直等待：先 `uiautomator dump` 取「继续安装」按钮 bounds，再 `input tap` 其中心。
+- 点击坐标用 `uiautomator dump` 的 bounds——**它就是 `input tap` 的坐标系**；不要按截图目测（浏览截图还会被降采样）。详情页版式会随「其他资源站」从「查找中…」变「N 个」整体位移，每次点击前重新 dump。
+- 播放页控制层 3–4 秒自动隐藏：先 `input tap` 画面中心唤出，再点按钮；刚 dump 完点击最稳。
+- 本机 `python` 是 Microsoft Store 占位（无输出、exit 49），`tools/uidump.py` 暂不可用；PowerShell 5 会把无 BOM 的中文 `.ps1` 按 ANSI 读，`tools/ui.ps1` 可能解析失败。可用 Git Bash + `node`（v24）解析 dump XML。
+- 真机 `logcat` 可能过滤应用日志，结论以探针文件为准。关键行：`[session-play] rawLen/pre`、`[session-setMedia] len/start`、`[session-register] len/ep`、`[token-swap] outLen`、`[resume-restore-check] startAtMs/suppressed/why`、`[PLAYER_ERROR] code`、`[engine-error]`。
+- 真机结论写进 `docs/04`（附日期/设备/探针行），不稳定或未复测的标「未验证」，不要用脚本结果冒充。
 
 ## 5. 任务收尾格式
 
@@ -154,6 +178,7 @@ Skill 是**按任务意图触发的操作手册**，不是项目依赖，也不�
 | 创建/修改 PPT、Excel、PDF、Word | 对应 `presentations` / `spreadsheets` / `pdf` / `documents` skill | 生成后必须渲染或读回校验，不交付未检查的文件 |
 | Windows 路径、编码、命令被吞 | `win-shell-paths` | 先读再发命令；本文件第 2 节是最低要求 |
 | 声称「完成 / 已修复 / 通过」 | `verification-before-completion` | 必须有本次实际命令输出；没有证据就降级为「未验证」 |
+| 新建仓库约定、更新 AGENTS.md / CLAUDE.md、文档与实现漂移 | `project-agents-md` | 先取证再落盘；只在目标仓库内写，不自动 commit/push；已有规则保留，只补缺口与失真项 |
 
 ### 6.3 Skill 调用后的记录
 
@@ -185,6 +210,8 @@ MCP 是**外部能力连接**，不是事实来源。一次任务里优先用能
 | `context_mode` | 大输出命令、批量查询、会话恢复 | 用它压缩噪声；最终结论仍以仓库文件和实测命令为准 |
 
 `context7`、`bili` 等由用户环境提供的 MCP 不属于本项目验收链。引用第三方 API 时可用 `context7` 查文档，但版本以 `gradle/libs.versions.toml` 和实际解析结果为准；`bili` 等外部数据服务不得把内容或用户数据写进本仓库。
+
+会话实际暴露的集合因 Agent 而异：Claude Code 本次核实到 `codegraph` 与 `context-mode`；`bili` 只用于上下文压缩，不属于验收链。表内未暴露的工具按 §7.1 第 5 条降级，不要为了凑流程去安装或臆造工具。
 
 ### 7.3 工具选择顺序
 
