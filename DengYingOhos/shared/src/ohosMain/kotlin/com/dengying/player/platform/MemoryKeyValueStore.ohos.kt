@@ -5,7 +5,7 @@ package com.dengying.player.platform
  *
  * ## 为什么需要它
  *
- * `OhosApp.init` 里 `FileKeyValueStore(dataDir)` 一旦抛错（目录不可用、锁分配失败等），
+ * `OhosApp.init` 里 `FileKeyValueStore(dataDir)` 一旦构造抛错（如锁分配失败），
  * 原实现会把 `lateinit var kv` 留在未初始化状态；随后 `installOhosUiDeps()` 里的
  * `AhAuth.init(OhosApp.kv)` / `ThemePrefs.init(OhosApp.kv)` 直接
  * `UninitializedPropertyAccessException`，启动期崩溃。
@@ -15,12 +15,16 @@ package com.dengying.player.platform
  *
  * ## 语义
  *
- * 与 [FileKeyValueStore] 的契约一致：
- * - `sync = true`：数据已写入内存，返回 `true`。
- * - `sync = false`：内存写是即时的，等价于「已提交」，返回 `true`。
+ * 遵守 [KeyValueStore] 的契约，但**不能假装已落盘**：
+ * - `sync = true`：内存写入成功，但数据只在本次进程内，重启即丢。契约要求
+ *   `sync = true` 的返回值表示「是否已落盘」，故这里返回 `false`——写入确实
+ *   生效于内存，却无法承诺持久化，谎报 `true` 会让 `Store.addFavorite` /
+ *   `removeFavorite` 静默丢失改动（FR-507）。
+ * - `sync = false`：契约只要求表示「已提交给写入队列」，内存写是即时的，
+ *   返回 `true`。
  *
- * 注意 `true` 在这里只表示「内存写入成功」，**不代表已落盘**——降级本身已经
- * 在 `OhosApp.init` 记录日志，调用方无需区分。
+ * 降级本身已在 `OhosApp.init` 记录日志；`sync = true` 的 `false` 返回值是
+ * 调用方唯一能观测到的信号。
  */
 class MemoryKeyValueStore : KeyValueStore {
 
@@ -35,12 +39,13 @@ class MemoryKeyValueStore : KeyValueStore {
     override fun putString(key: String, value: String, sync: Boolean): Boolean =
         lock.withLock {
             props[key] = value
-            true
+            // sync=true 返回值语义是「是否已落盘」：内存写成功也无法持久化，必须回 false。
+            !sync
         }
 
     override fun remove(key: String, sync: Boolean): Boolean =
         lock.withLock {
             props.remove(key)
-            true
+            !sync
         }
 }

@@ -69,14 +69,6 @@ object OhosApp {
     /** 安全访问：kv 未就绪时返回 null（不抛异常），供启动期装配使用 */
     val kvOrNull: KeyValueStore? get() = kvRef
 
-    /**
-     * kv 是否可用。
-     *
-     * `true` 只表示「读写可用」，不代表一定落盘：文件 kv 构造失败时会退化为
-     * [MemoryKeyValueStore]（见 [init]）。
-     */
-    val isKvReady: Boolean get() = kvRef != null
-
     /** 严格访问：调用方确知 [init] 已完成后使用；未就绪给出明确错误而非 lateinit 异常 */
     val kv: KeyValueStore
         get() = kvRef ?: error("OhosApp.kv 未就绪：dengy_app_init 尚未执行")
@@ -104,8 +96,7 @@ object OhosApp {
             store = Store(kvStore)
             // 两个BT 登录态与用户资产共用同一 kv（独立键，见 BttwoAuth）。
             // 对齐 Android DengYingApp.onCreate:99：必须先于首次组合与任何聚合。
-            // 走安全访问：kv 兜底也失败时不调用，BttwoAuth 自身对未 init 是安全的。
-            kvRef?.let { BttwoAuth.init(it) }
+            BttwoAuth.init(kvStore)
             sources = SourceRepository()
             pageCache = PageCache(kvStore)
             pageCache.pruneExpired()
