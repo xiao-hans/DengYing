@@ -39,16 +39,20 @@ import platform.ArkGraphics2D.NativeWindow.OH_NativeWindow_NativeObjectUnreferen
  *
  * - `OH_AVPlayer_SetVideoSurface` 必须在 `Prepare` 之前设置（avplayer.h 明确）。
  *   引擎在 `setMedia` 里创建 player 后、`SetURLSource`/`Prepare` 前取当前 window。
- * - surface 晚于 player 到达时：这里缓存 window 并通知活动引擎；引擎只在
- *   IDLE / INITIALIZED 态立即补设（仍是 Prepare 之前），其余状态等下一次
- *   `setMedia`（换集/换源都会重新 Prepare）。
+ * - surface 晚于 player 到达时：这里缓存 window 并通知活动引擎。IDLE /
+ *   INITIALIZED 态直接补设（仍在 Prepare 之前）；Prepare 之后再到达的新
+ *   surface 由引擎安全重建（保留 url/位置/起播意图重新 Prepare），因此窗口
+ *   重建后画面不会黑到下一次 setMedia。
+ * - 同一 window 上的「旧 player ReleaseSync → 新 player SetVideoSurface」
+ *   由引擎串行化，两个 player 不会同时消费同一 surface。
  * - surface 销毁：先通知引擎置空缓存，再 `DestroyNativeWindow` 释放「创建引用」。
  *   正在使用该 window 的 player 各自持有一份
  *   `OH_NativeWindow_NativeObjectReference`（由 [retainForPlayerRelease] 加），
- *   只有等它的 `OH_AVPlayer_ReleaseSync` 返回后（后台）才
- *   [releasePlayerWindow] 减引用。因此 bridge 从不销毁仍被 player 使用的
- *   window：`external_window.h` 明确要求并发销毁必须用这对引用计数接口。
- *   两个调用都发生在 UI 线程（onLoad/onDestroy 与 setMedia/Prepare 前）。
+ *   只有等它的 `OH_AVPlayer_ReleaseSync` 成功返回后（后台）才
+ *   [releasePlayerWindow] 减引用；ReleaseSync 失败则保留引用，避免 native
+ *   仍在使用时被回收。因此 bridge 从不销毁仍被 player 使用的 window：
+ *   `external_window.h` 明确要求并发销毁必须用这对引用计数接口。
+ *   retain 在 UI 线程，release 在 ReleaseSync 返回后的后台线程。
  *
  * ## 为什么不在 UI 层做
  *

@@ -22,8 +22,11 @@ import cnames.structs.OH_AVPlayer
 import platform.ArkGraphics2D.NativeWindow.OHNativeWindow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import platform.AVCodecKit.Core.OH_AVFormat_GetIntValue
 import platform.AVCodecKit.Core.OH_AVFormat_GetLongValue
 import platform.MediaKit.AVPlayer.*
@@ -61,7 +64,13 @@ import kotlin.math.abs
  * - 回调线程：native 回调只做「归属校验 + 拷贝 body 值」，随后 `Dispatchers.Main`
  *   派发；状态字段与 listener 通知都在主线程完成（PlaybackSession 也在 Main）。
  * - 释放：`ReleaseSync` 移出主线程，在 Dispatchers.Default 执行；锚点先失效，
- *   后台返回后再 dispose StableRef，换集不等待旧 release。
+ *   后台返回后再 dispose StableRef。ReleaseSync 失败则保留锚点与 window 引用
+ *   （可能仍会回调，提前释放会 UAF）。
+ * - 同一 window 的「旧 release → 新 player SetVideoSurface」串行：setMedia
+ *   只把绑定/Prepare 排到 Main 协程，遇到未完成的旧 release 就挂起等待，
+ *   不阻塞主线程；不同 window 互不影响。
+ * - Prepare 之后 surface 重建（窗口变化/折叠屏）：重新 setMedia，保留
+ *   url/headers/位置/起播意图，新 surface 在 Prepare 前绑好。
  */
 class OhosPlayerEngine : PlayerEngine {
 
@@ -142,6 +151,24 @@ class OhosPlayerEngine : PlayerEngine {
 
     /** ReleaseSync 会阻塞（非 idle 时较长），单独放后台，绝不占主线程/UI。 */
     private val releaseScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * 同一 native window 上的「旧 player ReleaseSync 完成 → 新 player SetVideoSurface」
+     * 串行化。有两个 AVPlayer 同时消费同一 surface 时，旧 release 还会在该 window
+     * 上做清理，必须等它返回。
+     *
+     * 等待全部用挂起（[Job.join] / [Mutex]），不阻塞主线程；表只在 Main 读写。
+     * 不同 window 各有一把锁，互不等待。
+     */
+    private val pendingReleases = mutableMapOf<CPointer<OHNativeWindow>, Job>()
+    private val windowGates = mutableMapOf<CPointer<OHNativeWindow>, Mutex>()
+
+    private fun gateFor(w: CPointer<OHNativeWindow>): Mutex =
+        windowGates.getOrPut(w) { Mutex() }
+
+    private fun trackRelease(window: CPointer<OHNativeWindow>?, job: Job) {
+        if (window != null) pendingReleases[window] = job
+    }
 
     // surface 回调来自 ArkTS UI 线程、状态改写来自 Dispatchers.Main，置 @Volatile
     // 保证 onVideoSurfaceChanged 看到的是已发布的 player/state。
@@ -244,13 +271,15 @@ class OhosPlayerEngine : PlayerEngine {
             anchorRef.asCPointer(),
         )
 
-        // AVPlayer 要求 SetVideoSurface 在 Prepare 之前；surface 未到时先出声，
-        // 等 onVideoSurfaceChanged 在 IDLE/INITIALIZED 态补设（见该函数）。
+        // AVPlayer 要求 SetVideoSurface 在 Prepare 之前。绑定与 Prepare 都走
+        // [scheduleBind]：若该 window 上还有旧 player 的 ReleaseSync 未返回，
+        // 先挂起等待（不阻塞主线程），避免两个 player 同时消费同一 surface。
         val w = videoWindow
         if (w != null) {
-            bindSurface(p, w)
+            scheduleBind(p, w, prepare = true)
         } else {
             Log.w(TAG, "no video surface yet: audio only until XComponent reports one")
+            OH_AVPlayer_Prepare(p)
         }
 
         val ret = OH_AVPlayer_SetURLSource(p, url)
@@ -266,16 +295,10 @@ class OhosPlayerEngine : PlayerEngine {
             loadedUrl = null
             playing = false
             anchorRef.get().active = false
-            releaseScope.launch {
-                val releaseRet = OH_AVPlayer_ReleaseSync(p)
-                if (releaseRet != 0u) Log.w(TAG, "ReleaseSync after SetURLSource failure: $releaseRet")
-                OhosVideoSurfaceBridge.releasePlayerWindow(failedWindow)
-                anchorRef.dispose()
-            }
+            releaseAsync(p, failedWindow, anchorRef)
             notifyError(PlaybackErrorKind.SourceGone, ret.toInt(), "SetURLSource failed: $ret")
             return
         }
-        OH_AVPlayer_Prepare(p)
     }
 
     override fun play() {
@@ -389,15 +412,9 @@ class OhosPlayerEngine : PlayerEngine {
 
         if (p != null) {
             // ReleaseSync 会阻塞调用线程（非 idle 时耗时更长），而 setMedia 在
-            // Dispatchers.Main 上调进来 —— 必须移出主线程。这里不等待：新 setMedia
-            // 已用新 player + 新锚点开始，旧 player 的回调因 active=false 被丢弃。
-            releaseScope.launch {
-                val ret = OH_AVPlayer_ReleaseSync(p)
-                if (ret != 0u) Log.w(TAG, "ReleaseSync failed: $ret")
-                // player 已不再持有该 window，这时才允许 bridge 减掉那份引用。
-                OhosVideoSurfaceBridge.releasePlayerWindow(releasedWindow)
-                anchorRef?.dispose()
-            }
+            // Dispatchers.Main 上调进来 —— 必须移出主线程。这里不阻塞等待：
+            // 新 player 若要用同一 window，[scheduleBind] 会 join 这个 Job。
+            releaseAsync(p, releasedWindow, anchorRef)
         } else {
             OhosVideoSurfaceBridge.releasePlayerWindow(releasedWindow)
             anchorRef?.dispose()
@@ -405,10 +422,42 @@ class OhosPlayerEngine : PlayerEngine {
     }
 
     /**
+     * 后台释放 player，并把 Job 记到 window 上，供后续绑定串行等待。
+     *
+     * ReleaseSync 失败时**不 dispose 锚点、不减 window 引用**：native 可能仍持有
+     * player 并回调 userData，提前 dispose 会造成 UAF。锚点 active 早已为 false，
+     * 泄漏的回调会被直接丢弃。先重试一次，仍失败就保持现状。
+     */
+    private fun releaseAsync(
+        p: CPointer<OH_AVPlayer>,
+        window: CPointer<OHNativeWindow>?,
+        anchorRef: StableRef<CallbackAnchor>?,
+    ) {
+        val job = releaseScope.launch {
+            var ret = OH_AVPlayer_ReleaseSync(p)
+            if (ret != 0u) {
+                Log.w(TAG, "ReleaseSync failed: $ret; retrying once")
+                ret = OH_AVPlayer_ReleaseSync(p)
+            }
+            if (ret != 0u) {
+                Log.w(TAG, "ReleaseSync still failed: $ret; keep anchor + window reference")
+                return@launch
+            }
+            // player 已不再持有该 window，这时才允许 bridge 减掉那份引用。
+            OhosVideoSurfaceBridge.releasePlayerWindow(window)
+            anchorRef?.dispose()
+        }
+        trackRelease(window, job)
+    }
+
+    /**
      * surface 就绪/销毁通知（来自 [OhosVideoSurfaceBridge]）。
      *
-     * AVPlayer 只允许在 Prepare 之前稳定设置显示面；因此仅当 player 仍处于
-     * IDLE/INITIALIZED 时立即补设，其余情况缓存，等下一次 setMedia 重新 Prepare 时生效。
+     * AVPlayer 只保证 Prepare 之前设置显示面可靠：
+     * - IDLE/INITIALIZED：直接补设（仍在 Prepare 之前）。
+     * - Prepare 之后（窗口重建/尺寸变化/折叠屏切换）：in-place 重设不可靠，
+     *   走 [rebuildForSurface] 安全重建，保证新 surface 立即生效，而不是黑到
+     *   下一次 setMedia。
      */
     fun onVideoSurfaceChanged(window: CPointer<OHNativeWindow>?) {
         videoWindow = window
@@ -417,11 +466,64 @@ class OhosPlayerEngine : PlayerEngine {
         // 返回后才减，bridge 的 DestroyNativeWindow 因此不会提前回收。
         if (window == null) return
         val p = player ?: return
-        if (state != STATE_IDLE && state != STATE_INITIALIZED) {
-            Log.w(TAG, "surface arrived after Prepare; will apply on next setMedia")
+        if (state == STATE_IDLE || state == STATE_INITIALIZED) {
+            scheduleBind(p, window, prepare = false)
             return
         }
-        bindSurface(p, window)
+        // 统一切到 Main 处理状态重建（surface 回调来自 ArkUI UI 线程）。
+        mainScope.launch {
+            if (videoWindow != window || player !== p) return@launch
+            if (state == STATE_IDLE || state == STATE_INITIALIZED) {
+                scheduleBind(p, window, prepare = false)
+            } else {
+                rebuildForSurface()
+            }
+        }
+    }
+
+    /**
+     * Prepare 之后 surface 被重建：保留 url / headers / 播放位置 / 起播意图，
+     * 重新走 setMedia（新 player 在新 surface 上、Prepare 之前完成绑定）。
+     *
+     * 不做 in-place `SetVideoSurface`：头文件只声明「失败返回 INVALID_VAL」，
+     * 官方文档要求 Prepare 之前调用，之后重设存在「返回成功但不切画面」的
+     * 不确定性，无法在不改工具链的前提下验证，因此选可证明正确的路径。
+     * 旧 player 在后台释放，window 由引用计数保活到 ReleaseSync 返回。
+     */
+    private fun rebuildForSurface() {
+        val url = loadedUrl ?: return
+        if (player == null) return
+        val resume = wantPlay || playing
+        val position = currentPosition
+        Log.w(TAG, "surface rebuilt after Prepare; re-preparing from ${position}ms")
+        setMedia(url, headersJson, position)
+        // setMedia 会重置起播意图；Prepare 回调在此之前不会到达（绑定是挂起的）。
+        wantPlay = resume
+    }
+
+    /**
+     * 串行地完成「等旧 release → 绑 surface →（可选）Prepare」。
+     *
+     * 若同一 window 上还有旧 player 的 `ReleaseSync` 未返回，先挂起等它结束：
+     * 两个 AVPlayer 不能同时作为同一 surface 的 consumer，旧 release 也可能
+     * 还在该 window 上做清理。等待是挂起式的，主线程不被阻塞。
+     */
+    private fun scheduleBind(
+        p: CPointer<OH_AVPlayer>,
+        w: CPointer<OHNativeWindow>,
+        prepare: Boolean,
+    ) {
+        val gate = gateFor(w)
+        val pending = pendingReleases[w]
+        mainScope.launch {
+            pending?.join()
+            gate.withLock {
+                // 排队期间可能已换集/换源/release，只让仍属当前 player 的绑定生效。
+                if (player !== p) return@withLock
+                if (boundWindow != w) bindSurface(p, w)
+                if (prepare) OH_AVPlayer_Prepare(p)
+            }
+        }
     }
 
     /**

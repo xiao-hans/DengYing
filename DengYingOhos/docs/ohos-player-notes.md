@@ -11,8 +11,15 @@
 3. bridge 调 `OH_NativeWindow_CreateNativeWindowFromSurfaceId`（API 12）生成
    `OHNativeWindow`，通知活动引擎。
 4. `OhosPlayerEngine.setMedia` 在 `OH_AVPlayer_SetVideoSurface` 之后才
-   `SetURLSource`/`Prepare`（头文件要求 Prepare 前设置）。surface 晚于 Prepare
-   到达时只缓存，下一次 `setMedia` 生效。
+   `SetURLSource`/`Prepare`（头文件要求 Prepare 前设置）。
+   - Prepare 之后再到达的新 surface（窗口重建、折叠屏切换）：不缓存等待，
+     直接保留 url/headers/当前播放位置/起播意图重新 `setMedia`，新 surface 在
+     Prepare 前绑好，画面不会黑到下一次换集。
+   - 同一 native window 上「旧 player `ReleaseSync` 返回 → 新 player
+     `SetVideoSurface`」用挂起式等待串行化（按 window 各一把 Mutex），主线程
+     不被阻塞，不同 window 互不影响。
+   - `ReleaseSync` 失败时保留回调锚点与 window 引用（重试一次），避免 native
+     仍回调已释放的 `StableRef`。
 
 限制：XComponent 是全屏的，视频铺满窗口；内嵌小窗的位置对齐需要
 Compose ↔ ArkUI interop（CMP `insertInteropView`），尚未实现。
@@ -35,14 +42,41 @@ Compose ↔ ArkUI interop（CMP `insertInteropView`），尚未实现。
 为什么不能简单对调层序：若把 SURFACE 盖到 ArkUI/Compose 之上，全屏视频会遮住
 所有 UI，两种顺序都不成立。
 
-需要的方案（择一，尚未实现）：
+#### 工具链调查（2026-11-13，只读，未改依赖）
 
-1. **Compose ↔ ArkUI interop**：把 native surface 的载体视图插入到 Compose
-   布局内，按 `VideoSurface` 的坐标/裁剪摆放（CMP ui-ohos 的 interop 视图路径）。
-2. **播放区域打洞**：Compose 侧对播放区域输出透明/挖孔，并调整 ArkUI 与
-   Compose 的合成层序，使视频只在该矩形内透出。
+检查 `ui-ohosArm64Main-1.9.2-1.1.0.klib` 与 `ui-arkui-ohosArm64`（klib 内
+metadata 字符串），确认存在 interop 基础设施符号：
 
-在解决前，播放页与内嵌播放位均视为「只有声音、无画面」。
+- `androidx.compose.ui.viewinterop.InteropViewHolder` / `TypedInteropViewHolder`
+- `androidx.compose.ui.viewinterop.TrackInteropPlacementModifierNode`
+- `InteropContainer.insertInteropView` / `removeInteropView`（成员名）
+- `androidx.compose.ui.interop.arkc.ArkUINativeView` /
+  `EmbeddedNativeViewRenderNode` / `C2ACApiDriver` / `ArkUIInteropContext`
+- 渲染侧 `EmbeddedInteropComponent`、`nativeHidden`、`wrapContentComposable`
+
+结论：这些是 **CMP 内部**的 Compose→ArkUI 组件（C2AC）与渲染节点，klib 中
+没有找到应用代码可直接调用的公开 Composable（例如 `InteropView(...)`）；
+缓存里也没有 sources jar 可核对可见性/签名。用反射式/未公开路径插入 interop
+视图会依赖内部二进制布局，不具备可维护性。
+
+#### 三条候选路径与结论
+
+1. **Compose 播放区域打洞（per-region 透明）**：需要在 CMP 的整块 EGL 输出面
+   上按矩形输出 alpha。`Color.Transparent` 只影响 Compose 内部绘制，不能擦掉
+   父 `Box` 的黑色，更不能让整块不透明的 Compose surface 局部透明。klib 中
+   未发现公开的 per-region transparency/punch 开关。**本轮不可行。**
+2. **公开 interop 视图把 native surface 放进 `VideoSurface` 的坐标/裁剪**：
+   正是 CMP 内部 `insertInteropView` + `InteropContainer` 做的事，但 1.9.2-1.1.0
+   未暴露公开 API。**卡在 API 缺失，不能在应用层干净实现。**
+3. **XComponent 移到 Compose 之上并按矩形裁剪**：ArkUI 层序可做（给
+   XComponent 设 position/width/height + clip），但视频矩形会盖住 Compose 在
+   该矩形内绘制的播放控件（控制条/手势层），必须把控件改成 ArkUI 覆盖层，
+   属于壳层大改；且本机无法用 hvigor 构建/验证 ArkTS 壳。**本轮不能落地。**
+   若后续采用，需要：`VideoSurface` 在 Compose 里 `onGloballyPositioned` 上报
+   窗口坐标 → 新增 NAPI → ArkTS 调整 XComponent 几何与 clip，并处理
+   px/vp 换算与页面切换。
+
+在解决前，播放页与内嵌播放位均视为「只有声音、无画面」，BLOCKER 保留。
 
 ## 请求头（未支持）
 
