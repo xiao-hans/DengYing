@@ -11,7 +11,7 @@
 
 | 任务 | 必读 |
 |---|---|
-| 鸿蒙 / NAPI / HAP | `archive/harmony/README.md`、`archive/ohos-build/README.md`、`docs/09` §9（两者已归档，现行鸿蒙工程见 `DengYingOhos`） |
+| 鸿蒙 / NAPI / HAP | `archive/harmony/README.md`（历史参考）、`docs/09` §9；两者已归档，现行鸿蒙工程见 `DengYingOhos` |
 | iOS / Xcode / Apple framework | `iosApp/README.md`、`docs/11-Mac待办清单.md`、`docs/09` §9 |
 | KMP 迁移、`expect/actual`、源集 | `docs/09-KMP多平台迁移方案.md`、各模块 `build.gradle.kts` |
 | 播放、缓存、网络、线程 | `docs/03` §3–§5、`docs/06`、`docs/07`、相关测试 |
@@ -29,7 +29,7 @@
 - 包名 `com.dengying.player`；debug 包多一个 `.debug` 后缀，两者可同机共存（数据各自独立）。
 - Android：compileSdk/targetSdk 36，minSdk 31，Kotlin + Jetpack Compose，Media3 ExoPlayer。
 - 共享层：KMP（`:shared` 逻辑）+ CMP（`:ui` 界面）。Kotlin 2.4.21，AGP 8.13.2，Gradle 8.14.3。
-- 三端壳：`:app`（Android）、`iosApp/`（iOS Swift 壳）、`harmony/`（鸿蒙 ArkTS/ArkUI 壳 + NAPI 桥）。
+- 三端壳：`:app`（Android）、`iosApp/`（iOS Swift 壳）、`archive/harmony/`（鸿蒙 ArkTS/ArkUI 壳 + NAPI 桥，已归档；现行鸿蒙壳为 `DengYingOhos/harmony`）。
 - 本工程是鸿蒙工程 `hmVideo` 的移植与多平台扩展；行为契约逐条沿用，差异与理由见 `docs/01`。
 
 | 层 / 模块 | 职责 | 不得做什么 |
@@ -226,7 +226,7 @@ MCP 是**外部能力连接**，不是事实来源。一次任务里优先用能
 
 - 新行为：更新 `docs/02` 的追踪矩阵；有实测就追加 `docs/04` / `docs/05`，附日期与环境。
 - 架构或模块边界变化：先改 `docs/03`，再改代码；不要先写「已实现」再补代码。
-- 迁移/平台差异：`docs/09`；鸿蒙壳：`harmony/README.md`；iOS：`iosApp/README.md` + `docs/11`。
+- 迁移/平台差异：`docs/09`；鸿蒙壳：`archive/harmony/README.md`（已归档，现行见 `DengYingOhos`）；iOS：`iosApp/README.md` + `docs/11`。
 - 文档链接使用仓库相对路径；新增文件放对应目录，不把截图/日志散落到根目录。
 - 提交前：`rtk git diff --check`、读回改动文件、确认 `rtk git status --short` 无意外文件。
 - 提交信息说明「为什么」而不只是「改了什么」；除非用户要求，不自动 commit/push。
