@@ -748,9 +748,11 @@ napi_value ClearHistory(napi_env env, napi_callback_info /*info*/) {
 }
 
 // ---- 播放画面：XComponent surfaceId -> Kotlin @CName ----
-// ArkTS 侧拿到的是十进制字符串；Kotlin 侧只接受 uint64，这里解析后转发。
+// ArkTS 侧拿到的是十进制字符串；Kotlin 侧按 ULong(uint64_t) 接收。
+// 必须用 strtoull + uint64_t 原样传：surfaceId 可能超过 INT64_MAX，
+// strtoll/int64_t 会饱和成错误 id（静默绑定失败）。
 // 符号在 libdengyui.so（shared 的 OhosVideoSurfaceBridge）。
-using VideoSurfaceFn = void (*)(int64_t);
+using VideoSurfaceFn = void (*)(uint64_t);
 
 napi_value SetVideoSurfaceId(napi_env env, napi_callback_info info) {
   ClearPendingException(env);
@@ -767,7 +769,7 @@ napi_value SetVideoSurfaceId(napi_env env, napi_callback_info info) {
     BRIDGE_LOG("setVideoSurfaceId: dengy_set_video_surface missing");
     return nullptr;
   }
-  fn(static_cast<int64_t>(strtoll(text.c_str(), nullptr, 10)));
+  fn(static_cast<uint64_t>(strtoull(text.c_str(), nullptr, 10)));
   BRIDGE_LOG("setVideoSurfaceId: %{public}s", text.c_str());
   return nullptr;
 }
@@ -786,7 +788,7 @@ napi_value ClearVideoSurfaceId(napi_env env, napi_callback_info info) {
     BRIDGE_LOG("clearVideoSurfaceId: dengy_clear_video_surface missing");
     return nullptr;
   }
-  fn(static_cast<int64_t>(strtoll(text.c_str(), nullptr, 10)));
+  fn(static_cast<uint64_t>(strtoull(text.c_str(), nullptr, 10)));
   BRIDGE_LOG("clearVideoSurfaceId: %{public}s", text.c_str());
   return nullptr;
 }

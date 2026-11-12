@@ -151,6 +151,15 @@ class OhosPlayerEngine : PlayerEngine {
     /** 当前显示面。surface 可能在 player 之前/之后到达，统一由 [onVideoSurfaceChanged] 维护。 */
     @Volatile
     private var videoWindow: CPointer<OHNativeWindow>? = null
+
+    /**
+     * 当前 player 正在使用的 window，对应 bridge 通过
+     * [OhosVideoSurfaceBridge.retainForPlayerRelease] 加的一次原生引用。
+     * 只有该 player 的 `OH_AVPlayer_ReleaseSync` 返回后才减引用（见 [releasePlayer]）——
+     * 否则 surface 并发销毁会回收仍在使用的 window（UAF）。
+     */
+    @Volatile
+    private var boundWindow: CPointer<OHNativeWindow>? = null
     private var callbacksAnchor: StableRef<CallbackAnchor>? = null
 
     /** 每换一次 player 递增，回调按代次过滤旧 player 的异步事件。 */
@@ -239,8 +248,7 @@ class OhosPlayerEngine : PlayerEngine {
         // 等 onVideoSurfaceChanged 在 IDLE/INITIALIZED 态补设（见该函数）。
         val w = videoWindow
         if (w != null) {
-            val surfaceRet = OH_AVPlayer_SetVideoSurface(p, w)
-            if (surfaceRet != 0u) Log.w(TAG, "SetVideoSurface failed: $surfaceRet")
+            bindSurface(p, w)
         } else {
             Log.w(TAG, "no video surface yet: audio only until XComponent reports one")
         }
@@ -251,6 +259,8 @@ class OhosPlayerEngine : PlayerEngine {
             // 否则 PlaybackSession 会停在 Buffering 且 player 泄漏。
             player = null
             callbacksAnchor = null
+            val failedWindow = boundWindow
+            boundWindow = null
             generation++
             state = STATE_ERROR
             loadedUrl = null
@@ -259,6 +269,7 @@ class OhosPlayerEngine : PlayerEngine {
             releaseScope.launch {
                 val releaseRet = OH_AVPlayer_ReleaseSync(p)
                 if (releaseRet != 0u) Log.w(TAG, "ReleaseSync after SetURLSource failure: $releaseRet")
+                OhosVideoSurfaceBridge.releasePlayerWindow(failedWindow)
                 anchorRef.dispose()
             }
             notifyError(PlaybackErrorKind.SourceGone, ret.toInt(), "SetURLSource failed: $ret")
@@ -352,8 +363,9 @@ class OhosPlayerEngine : PlayerEngine {
     }
 
     /**
-     * 视图绑定口子。native player 本身不能直接给 Compose 用；画面要等
-     * surfaceId 通道接上后返回一个包装对象。当前恒 null（黑底占位，合法契约）。
+     * 视图绑定口子。画面由 native AVPlayer 直接渲染到 ArkUI XComponent 的
+     * surface（见 [OhosVideoSurfaceBridge]），Compose 侧拿不到、也不需要原生视图
+     * 句柄，因此恒为 null（合法契约，由 `VideoSurface` 画占位/透明）。
      */
     override fun viewHandle(): Any? = null
 
@@ -361,6 +373,9 @@ class OhosPlayerEngine : PlayerEngine {
 
     private fun releasePlayer() {
         val p = player
+        // 该 window 的引用必须活到 ReleaseSync 返回之后：surface 可能在此期间被销毁。
+        val releasedWindow = boundWindow
+        boundWindow = null
         player = null
         playing = false
         state = STATE_RELEASED
@@ -379,9 +394,12 @@ class OhosPlayerEngine : PlayerEngine {
             releaseScope.launch {
                 val ret = OH_AVPlayer_ReleaseSync(p)
                 if (ret != 0u) Log.w(TAG, "ReleaseSync failed: $ret")
+                // player 已不再持有该 window，这时才允许 bridge 减掉那份引用。
+                OhosVideoSurfaceBridge.releasePlayerWindow(releasedWindow)
                 anchorRef?.dispose()
             }
         } else {
+            OhosVideoSurfaceBridge.releasePlayerWindow(releasedWindow)
             anchorRef?.dispose()
         }
     }
@@ -394,14 +412,33 @@ class OhosPlayerEngine : PlayerEngine {
      */
     fun onVideoSurfaceChanged(window: CPointer<OHNativeWindow>?) {
         videoWindow = window
+        // window == null 表示 surface 即将销毁：只清缓存，不动 [boundWindow]。
+        // 该 player 仍在使用旧 window，它的引用由 [releasePlayer] 在 ReleaseSync
+        // 返回后才减，bridge 的 DestroyNativeWindow 因此不会提前回收。
         if (window == null) return
         val p = player ?: return
         if (state != STATE_IDLE && state != STATE_INITIALIZED) {
             Log.w(TAG, "surface arrived after Prepare; will apply on next setMedia")
             return
         }
-        val ret = OH_AVPlayer_SetVideoSurface(p, window)
-        if (ret != 0u) Log.w(TAG, "late SetVideoSurface failed: $ret")
+        bindSurface(p, window)
+    }
+
+    /**
+     * 把 [w] 绑给 [p]（必须在 Prepare 之前）。先由 bridge 加一次原生引用，
+     * 保证这个 window 在本 player 存活期间不会被 surface 销毁回收。
+     */
+    private fun bindSurface(p: CPointer<OH_AVPlayer>, w: CPointer<OHNativeWindow>) {
+        val prev = boundWindow
+        if (prev == w) return
+        OhosVideoSurfaceBridge.retainForPlayerRelease(w)
+        boundWindow = w
+        val ret = OH_AVPlayer_SetVideoSurface(p, w)
+        if (ret != 0u) Log.w(TAG, "SetVideoSurface failed: $ret")
+        if (prev != null) {
+            // 同一 player 换显示面：旧 window 已不再被它使用，可立即减引用。
+            OhosVideoSurfaceBridge.releasePlayerWindow(prev)
+        }
     }
 
     /** 最近档映射：AVPlaybackSpeed 只有离散档位，取绝对差最小的一档。 */

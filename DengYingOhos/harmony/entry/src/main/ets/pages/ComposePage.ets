@@ -11,7 +11,14 @@ struct ComposePage {
   private controller: ArkUIViewController | undefined = undefined;
   @State errorMessage: string = '';
   // 播放画面：全屏 XComponent 铺在 Compose 下方，surfaceId 经 NAPI 交给 native AVPlayer。
-  // 位置限制见 Kotlin VideoSurface actual 的注释（当前尚未做 Compose interop 定位）。
+  //
+  // BLOCKER（2026-11-13，未修）：XComponent 在 Stack 里位于 Compose 之下，而 CMP 的
+  // Compose 组件自身也是 XComponent/EGL 出图，会把视频层整块盖住 → 音频正常、画面全黑。
+  // Kotlin 侧 PlayerScreen/InlinePlayer 还铺了黑色底，透明占位无法透出。
+  // 也不能简单把 SURFACE 盖到上层（会遮住全部 UI）。
+  // 需要 Compose↔ArkUI interop：把 native surface 放到 VideoSurface 的坐标/裁剪内，
+  // 或 Compose 侧对播放区域打洞并调整层序。详见 docs/ohos-player-notes.md。
+  // 位置限制同上（当前尚未做 Compose interop 定位）。
   private surfaceController: XComponentController = new XComponentController();
   private surfaceId: string = '';
 

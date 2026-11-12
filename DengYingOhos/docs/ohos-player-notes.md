@@ -18,6 +18,32 @@
 Compose ↔ ArkUI interop（CMP `insertInteropView`），尚未实现。
 `VideoSurface` actual 在 surface 就绪时透明、未就绪时黑底。
 
+### BLOCKER：视频层被 Compose 画布遮挡（2026-11-13，未修）
+
+现状：`ComposePage.ets` 的 Stack 顺序是「XComponent 在下、Compose 在上」，
+音频正常但**画面始终不可见**（全黑）。
+
+原因：
+
+- CMP 的 `Compose` 组件自身用 XComponent/EGL 出图，整块 Compose 内容都画在
+  视频 surface 之上；ArkUI 的层序决定了后绘制的 Compose 覆盖先绘制的视频层。
+- 播放页根 `Box` 是 `fillMaxSize().background(Color.Black)`
+  （`PlayerScreen.kt`），`InlinePlayer` 的 16:9 区域同样铺黑底。
+- `VideoSurface` 里 `Color.Transparent` 只是不画自己的 Box，擦不掉父 Box 已画
+  的黑色，也无法穿透 Compose 自己的渲染面。
+
+为什么不能简单对调层序：若把 SURFACE 盖到 ArkUI/Compose 之上，全屏视频会遮住
+所有 UI，两种顺序都不成立。
+
+需要的方案（择一，尚未实现）：
+
+1. **Compose ↔ ArkUI interop**：把 native surface 的载体视图插入到 Compose
+   布局内，按 `VideoSurface` 的坐标/裁剪摆放（CMP ui-ohos 的 interop 视图路径）。
+2. **播放区域打洞**：Compose 侧对播放区域输出透明/挖孔，并调整 ArkUI 与
+   Compose 的合成层序，使视频只在该矩形内透出。
+
+在解决前，播放页与内嵌播放位均视为「只有声音、无画面」。
+
 ## 请求头（未支持）
 
 结论：**当前 SDK 的 native OH_AVPlayer 没有请求头入口。**

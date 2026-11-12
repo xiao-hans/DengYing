@@ -16,6 +16,8 @@ import kotlin.experimental.ExperimentalNativeApi
 import kotlin.native.CName
 import platform.ArkGraphics2D.NativeWindow.OH_NativeWindow_CreateNativeWindowFromSurfaceId
 import platform.ArkGraphics2D.NativeWindow.OH_NativeWindow_DestroyNativeWindow
+import platform.ArkGraphics2D.NativeWindow.OH_NativeWindow_NativeObjectReference
+import platform.ArkGraphics2D.NativeWindow.OH_NativeWindow_NativeObjectUnreference
 
 /**
  * ArkUI XComponent surfaceId → native `OHNativeWindow` 的全局通道。
@@ -40,8 +42,13 @@ import platform.ArkGraphics2D.NativeWindow.OH_NativeWindow_DestroyNativeWindow
  * - surface 晚于 player 到达时：这里缓存 window 并通知活动引擎；引擎只在
  *   IDLE / INITIALIZED 态立即补设（仍是 Prepare 之前），其余状态等下一次
  *   `setMedia`（换集/换源都会重新 Prepare）。
- * - surface 销毁：先通知引擎置空，再 DestroyNativeWindow。AVPlayer 的 release
- *   已在后台执行，此处不再等待。
+ * - surface 销毁：先通知引擎置空缓存，再 `DestroyNativeWindow` 释放「创建引用」。
+ *   正在使用该 window 的 player 各自持有一份
+ *   `OH_NativeWindow_NativeObjectReference`（由 [retainForPlayerRelease] 加），
+ *   只有等它的 `OH_AVPlayer_ReleaseSync` 返回后（后台）才
+ *   [releasePlayerWindow] 减引用。因此 bridge 从不销毁仍被 player 使用的
+ *   window：`external_window.h` 明确要求并发销毁必须用这对引用计数接口。
+ *   两个调用都发生在 UI 线程（onLoad/onDestroy 与 setMedia/Prepare 前）。
  *
  * ## 为什么不在 UI 层做
  *
@@ -109,6 +116,8 @@ object OhosVideoSurfaceBridge {
 
         // 先让引擎断掉旧 window（AVPlayer 侧不提供 clear surface，置空引用即可）。
         engines.forEach { it.onVideoSurfaceChanged(null) }
+        // 只释放 bridge 自己的「创建引用」。若还有 player 持有该 window，
+        // 它那份 Reference 会让对象存活到 ReleaseSync 返回后的 Unreference。
         if (oldWindow != null) {
             OH_NativeWindow_DestroyNativeWindow(oldWindow)
         }
@@ -154,19 +163,37 @@ object OhosVideoSurfaceBridge {
             }
         }
     }
+
+    /**
+     * 引擎把 window 交给某个 player 使用前，由 bridge 为它加一次引用。
+     * 这份引用保证 surface 并发销毁时对象不会被立刻回收。
+     */
+    fun retainForPlayerRelease(window: CPointer<OHNativeWindow>) {
+        OH_NativeWindow_NativeObjectReference(window)
+    }
+
+    /**
+     * 该 player 的 `OH_AVPlayer_ReleaseSync` 返回后（后台线程）调用，
+     * 释放 [retainForPlayerRelease] 加的那一次引用。
+     */
+    fun releasePlayerWindow(window: CPointer<OHNativeWindow>?) {
+        if (window != null) OH_NativeWindow_NativeObjectUnreference(window)
+    }
 }
 
 // @CName 必须是顶层函数（不能标在 object 成员上，否则会多一个 receiver 参数）。
-// ArkTS 侧 surfaceId 是十进制字符串，napi_init.cpp 解析成 int64 后传入。
+// ArkTS 侧 surfaceId 是十进制字符串；napi_init.cpp 用 strtoull 按 uint64_t 原样传入。
+// 这里也必须是 ULong（64 位无符号）：surfaceId 可能超过 Long.MAX_VALUE，
+// 用 Long 会饱和成错误 id。
 
 @CName("dengy_set_video_surface")
-fun dengySetVideoSurface(surfaceId: Long) {
-    if (surfaceId <= 0L) return
-    OhosVideoSurfaceBridge.updateSurface(surfaceId.toULong())
+fun dengySetVideoSurface(surfaceId: ULong) {
+    if (surfaceId == 0uL) return
+    OhosVideoSurfaceBridge.updateSurface(surfaceId)
 }
 
 @CName("dengy_clear_video_surface")
-fun dengyClearVideoSurface(surfaceId: Long) {
-    if (surfaceId <= 0L) return
-    OhosVideoSurfaceBridge.clearSurface(surfaceId.toULong())
+fun dengyClearVideoSurface(surfaceId: ULong) {
+    if (surfaceId == 0uL) return
+    OhosVideoSurfaceBridge.clearSurface(surfaceId)
 }

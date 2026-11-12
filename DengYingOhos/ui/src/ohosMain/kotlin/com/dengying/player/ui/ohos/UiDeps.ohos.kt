@@ -38,7 +38,8 @@ object OhosUiDeps : UiDeps {
      * （cinterop 直接调 MediaKit 的 `OH_AVPlayer`）。单例、归零只暂停不释放，
      * 语义与 Android `PlaybackEngineHolder` 对齐。
      *
-     * WIP：native AVPlayer 只能出声，画面绑定（ArkUI XComponent surfaceId）未接；
+     * 画面已接入 ArkUI XComponent surfaceId（见 `OhosVideoSurfaceBridge`）；
+     * 但视频层目前在 Compose 画布之下，实际不可见，见 BLOCKER 说明。
      * 自定义请求头本 SDK 版本无 native 入口，暂不生效。
      */
     override val engineHost: PlayerEngineHost = OhosPlayerEngineHost
