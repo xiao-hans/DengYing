@@ -10,16 +10,22 @@
    → `OhosVideoSurfaceBridge.updateSurface()`（shared/ohosMain）。
 3. bridge 调 `OH_NativeWindow_CreateNativeWindowFromSurfaceId`（API 12）生成
    `OHNativeWindow`，通知活动引擎。
-4. `OhosPlayerEngine.setMedia` 在 `OH_AVPlayer_SetVideoSurface` 之后才
-   `SetURLSource`/`Prepare`（头文件要求 Prepare 前设置）。
+4. `OhosPlayerEngine.setMedia` 的顺序是 `SetURLSource` 成功之后，才在
+   INITIALIZED 状态下 `SetVideoSurface` → `Prepare`；绝不在 `SetURLSource`
+   之前 `Prepare`。
+   - 无 surface 时：`SetURLSource` 成功后停在 INITIALIZED 等待；surface
+     到达时先绑定再补 `Prepare`（`onVideoSurfaceChanged` 的 IDLE/INITIALIZED
+     路径），不会永久停在 Buffering。
    - Prepare 之后再到达的新 surface（窗口重建、折叠屏切换）：不缓存等待，
-     直接保留 url/headers/当前播放位置/起播意图重新 `setMedia`，新 surface 在
-     Prepare 前绑好，画面不会黑到下一次换集。
-   - 同一 native window 上「旧 player `ReleaseSync` 返回 → 新 player
-     `SetVideoSurface`」用挂起式等待串行化（按 window 各一把 Mutex），主线程
-     不被阻塞，不同 window 互不影响。
-   - `ReleaseSync` 失败时保留回调锚点与 window 引用（重试一次），避免 native
-     仍回调已释放的 `StableRef`。
+     直接保留 url/headers/当前播放位置（含尚未应用的 pending seek）/起播意图
+     重新 `setMedia`，新 surface 在 Prepare 前绑好。
+   - 同一 native window 上「旧 player `ReleaseSync` 成功 → 新 player
+     `SetVideoSurface`」按 window 串行：等待所有未完成的 ReleaseSync，
+     等待期间窗口变化则改为对**当前** window 绑定；主线程不被阻塞，不同
+     window 互不影响。
+   - `ReleaseSync` 失败时保留回调锚点与 window 引用（只重试一次），并把该
+     window 标记为不可再绑定：新 player 不会在同一 window 上
+     `SetVideoSurface`，直到 surface 重建。
 
 限制：XComponent 是全屏的，视频铺满窗口；内嵌小窗的位置对齐需要
 Compose ↔ ArkUI interop（CMP `insertInteropView`），尚未实现。
