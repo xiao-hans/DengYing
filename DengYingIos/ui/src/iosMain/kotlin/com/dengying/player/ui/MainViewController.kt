@@ -102,6 +102,9 @@ class IosAppDeps : UiDeps {
         // 同构（键 → 字符串扁平映射、加载一次内存读）。
         val kv = UserDefaultsStore()
         store = Store(kv)
+        // P4-1d：PlaybackSession 升舱到 commonMain 后不再带 Context，引擎由宿主注入。
+        // 与 Android `DengYingApp.onCreate` 对齐：单例宿主即 IosPlayerEngineHost。
+        com.dengying.player.playback.PlaybackSession.init(IosPlayerEngineHost)
         // 两个BT 登录态与用户资产共用同一 NSUserDefaults 域（独立键，见 BttwoAuth）
         com.dengying.player.data.source.adapters.BttwoAuth.init(kv)
         // AH 账号体系的签名令牌 / device_id / 会话原始数据也落在同一份 kv；
