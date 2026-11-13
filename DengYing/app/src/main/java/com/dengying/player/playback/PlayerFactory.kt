@@ -326,6 +326,11 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         listeners.add(listener)
     }
 
+    override fun removeListener(listener: PlayerListener) {
+        // CopyOnWriteArrayList.remove 对不存在的元素返回 false，天然幂等。
+        listeners.remove(listener)
+    }
+
     override fun viewHandle(): Any? = player
 
     /**
