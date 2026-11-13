@@ -59,3 +59,25 @@ xcodebuild -list -project iosApp/DengYing.xcodeproj
 
 免费 Apple ID 签名 7 天过期且不可分发他人；给朋友长期安装需付费开发者账号
 （TestFlight 或 Ad Hoc）。这属打包环节，不影响本工程骨架的编译验证。
+
+## 投屏 TODO（未实现，不要写成「已支持」）
+
+Android 侧已接 MediaRouter + GMS Cast 本地下发通道（见各工程 `docs/02` §0.1），
+**iOS 原生侧在本分支只写方案，不落实现代码**。原因：本环境是 Linux，
+没有 macOS / Xcode，不能编译 Swift、不能链接 `AVKit` / `AVFoundation`、
+不能做真机 AirPlay 验证；贸然写 Swift/ArkTS 会造成「看起来已支持」的假象。
+
+方案（在 macOS + Xcode 上落地时执行）：
+
+| 项 | 内容 |
+|---|---|
+| 目标文件 | `iosApp/DengYingApp.swift`（新建 `AirPlayPicker.swift` 亦可）、`ui/src/iosMain/.../platform/CastLauncher.ios.kt` |
+| API | `AVRoutePickerView`（`AVKit`，iOS 11+）经 `UIViewRepresentable` 包进 SwiftUI；或 `MPVolumeView`（`MediaPlayer`）的 AirPlay 按钮。`AVPlayer.allowsExternalPlayback = true`、`usesExternalPlaybackWhileExternalScreenIsActive` 按会话需要设置 |
+| 共享层接线 | `UiDeps.castLauncher` 目前缺省 `UnsupportedCastLauncher`（点击会明确提示「当前平台尚未接入投屏通道」）。需在 `ui/src/iosMain` 提供 `CastLauncher` 的 `actual` 或等价平台注入，把 `launch()` 映射到唤起 AirPlay 路由选择器 |
+| 系统能力 | AirPlay 由系统弹路由选择器，应用不自建云端服务、不新增 entitlement；`Info.plist` 无需因 AirPlay 加键 |
+| 缺的环境 | macOS + Xcode + iOS 真机/模拟器 + AirPlay 接收端（Apple TV / 支持 AirPlay 的电视） |
+| 待验证项 | 路由选择器能弹出、选中接收端后 `AVPlayer` 切到外部播放、后台播放保持、断开回退本机、`CastUtil` 失败分流文案在 iOS 侧呈现 |
+
+`ui/src/iosMain` 侧目前**不改**：`applyDefaultHierarchyTemplate=false` 且 iosMain 手工接线，
+新增 expect/actual 需同步检查 `iosArm64Main` / `iosSimulatorArm64Main`，没有 Xcode
+就无法确认编译，故留作明确 TODO。

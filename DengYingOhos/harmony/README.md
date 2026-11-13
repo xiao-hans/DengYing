@@ -80,3 +80,25 @@ harmony/
 4. 验证装机生效用 marker 串（dumpLayout 找改动文本），别信 hvigor/install 回执。
 5. 构建必须 JDK18（`export JAVA_HOME="C:/Program Files/Java/jdk-18.0.2.1"`）；
    hvigor 用 `JAVA_HOME="D:/DevEco Studio/jbr"` + `DEVECO_SDK_HOME="D:/DevEco Studio/sdk"`。
+
+## 投屏 TODO（未实现，不要写成「已支持」）
+
+Android 壳已接 MediaRouter + GMS Cast 本地下发通道（见 `docs/02` §0.1），但那是
+**Android 壳**（`app/`）的实现，鸿蒙原生壳（`harmony/`）与 `ui/src/ohosMain`
+**本分支不落实现代码**。原因：本环境是 Linux，没有 DevEco Studio / HarmonyOS SDK，
+不能打 HAP、不能在模拟器或真机上验证；写未经编译的 ArkTS/NAPI 会造成假象。
+
+方案（在 DevEco Studio 环境落地时执行）：
+
+| 项 | 内容 |
+|---|---|
+| 目标文件 | `harmony/entry/src/main/ets/` 下新增投播组件（如 `CastPicker.ets`）、`entry/src/main/cpp/napi_init.cpp`（若需把 `CastLauncher.launch()` 经 NAPI 透传到 ArkTS）、`ui/src/ohosMain/.../platform/CastLauncher.ohos.kt` |
+| API | 原工程 AVSessionKit 路线：`@ohos.multimedia.avsession` 的 `AVSession` / `AVCastPicker`（ArkUI 组件）/ `AVCastController`；或 HarmonyOS 投屏 Kit 的投播能力。以 DevEco 实际 SDK 版本的 API 为准，不在 Linux 上凭记忆写签名 |
+| 共享层接线 | `UiDeps.castLauncher` 目前缺省 `UnsupportedCastLauncher`（点击会明确提示「当前平台尚未接入投屏通道」）。需在 `ui/src/ohosMain` 提供 `CastLauncher` 的 actual 或等价注入，把 `launch()` 映射到唤起 AVCastPicker / 建立投播会话 |
+| 权限 | `ohos.permission.INTERNET` 已有；投播相关权限（以 DevEco SDK 为准）需在 `entry/src/main/module.json5` 补声明并评估 SEC-001 权限面 |
+| 缺的环境 | DevEco Studio + HarmonyOS SDK + ohosArm64 真机或 x86_64 模拟器 + 投播接收端 |
+| 待验证项 | 设备发现、AVCastPicker 弹出、投播会话建立、远端拉流、断线重连、远端连播、`CastUtil` 失败分流文案呈现 |
+
+`ui/src/ohosMain` 侧目前**不改**：CPF Kotlin 2.2.21-1.1.0 的 ohos target 与
+手工源集接线（`applyDefaultHierarchyTemplate=false`）都需 DevEco 环境确认编译，
+没有该环境就不能声称「已支持」。
