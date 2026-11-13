@@ -50,6 +50,15 @@
 				<key>NSExceptionMinimumTLSVersion</key>
 				<string>TLSv1.2</string>
 			</dict>
+			<key>danmu.bmsp9.xyz</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<false/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string>
+			</dict>
 			<key>qkys.qukanwh.com</key>
 			<dict>
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>

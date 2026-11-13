@@ -382,6 +382,21 @@ fun PlayerScreen(
             }
         }
 
+        // ---- 一次性轻提示（如换档失败已回退）----
+        // 与 errMsg 的常驻错误浮层分开：这种提示可自愈，不应遮挡控制层或要求重试。
+        if (s.noticeMsg.isNotEmpty() && s.errMsg.isEmpty()) {
+            Text(
+                text = s.noticeMsg,
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 24.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+            )
+        }
+
         // ---- 手势调节浮层（P-04 亮度靠左 / P-05 音量靠右）----
         //
         // 【为什么放在这里而不是 ControlOverlay 里】控制层会随 4 秒自动隐藏，

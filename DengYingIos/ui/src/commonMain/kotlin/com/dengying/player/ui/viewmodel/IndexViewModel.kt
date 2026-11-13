@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlin.math.min
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import com.dengying.player.data.cache.PageCache
@@ -666,8 +667,12 @@ class IndexViewModel(
                     setCat(idx) { it.copy(refining = false, sections = emptyList(), errMsg = "推荐页暂时拉不到内容") }
                     return@launch
                 }
-                val sections = repo.fetchHomeSections(src, tab.path, force = true)
+                val fetched = repo.fetchHomeSections(src, tab.path, force = true)
                 if (!isLatest(idx, seq)) return@launch
+                // 源站这份首页是运营固定排的，直拉网络也换不出新片。带「换一换」
+                // 备用池的版块（备用片已接在条目后面）每次刷新整体轮换一格，
+                // 让下拉真正换出一批不同的片。
+                val sections = rotateRefreshed(state.cat(idx).sections, fetched)
                 sectionsByPath["${src.key}|${tab.path}"] = sections
                 setCat(idx) {
                     it.copy(
@@ -686,6 +691,41 @@ class IndexViewModel(
                     setCat(idx) { it.copy(refining = false, errMsg = "网络异常，请检查连接") }
                 }
             }
+        }
+    }
+
+    /**
+     * 刷新时轮换版块展示。
+     *
+     * 源站首页是运营固定排的，每次直拉都一样，而且「换一换」备用池只有
+     * 「重磅推荐」「精选热剧」「爆款短剧」三个版块有——「今日焦点」「首播影院」
+     * 这些占首屏的大版块一条备用片都没有，只轮换有备用池的版块用户看不出刷新。
+     * 所以每次刷新把每个版块当前展示在最前面的几部挪到末尾，横滑条开头就换一批。
+     * 片数有限，轮完一圈会回到原来的，但每次下拉都能看到不同的片。
+     */
+    private fun rotateRefreshed(
+        previous: List<HomeSection>,
+        fetched: List<HomeSection>,
+    ): List<HomeSection> {
+        val prevByTitle = previous.associateBy { it.title }
+        return fetched.map { section ->
+            val before = prevByTitle[section.title] ?: return@map section
+            val items = section.items
+            if (items.size < 2) return@map section
+            // 每次挪走的条数跟横滑条一屏能看见的张数对齐（约 3 张），又不超过一半，
+            // 避免片少的版块一下轮完。前后顺序一致说明没有轮换过，从 0 开始。
+            val step = min(3, items.size / 2)
+            val offset = if (
+                items.take(before.items.size) == before.items
+            ) {
+                0
+            } else {
+                val pos = items.indexOfFirst { it.vod_id == before.items.first().vod_id }
+                if (pos < 0) 0 else pos
+            }
+            val start = (offset + step) % items.size
+            if (start == 0) return@map section
+            HomeSection(title = section.title, items = items.drop(start) + items.take(start))
         }
     }
 
