@@ -1,24 +1,12 @@
 {
   "app": {
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "storeFile": "C:/Users/HANXIAO/hmVideo-signing/dengying-release-java.p12",
-          "storePassword": "0000001D848F35797B973637B7A2D4F5F415FCD8074EE233680EB243F702D96E0E02555EE86B4BC97725AB42B1",
-          "keyAlias": "dengying-release",
-          "keyPassword": "0000001D84C5D3A298F82CB0C0A96EA9930C35362A8A46D36C63CD485CEF94703CADA3683D01EB132D1B899D9E",
-          "signAlg": "SHA256withECDSA",
-          "profile": "C:/Users/HANXIAO/hmVideo-signing/dengying-release-profileRelease.p7b",
-          "certpath": "C:/Users/HANXIAO/hmVideo-signing/灯影.cer"
-        }
-      }
-    ],
+    // 签名材料不入库。空数组表示不携带任何口令与本机路径；
+    // 本地构建前按 README「签名配置」在本机生成，恢复后仍是未签名 HAP 之外的行为。
+    // 若要在本机构建已签名 HAP，按下述方式恢复后再把 products[0].signingConfig 填回 "default"。
+    "signingConfigs": [],
     "products": [
       {
         "name": "default",
-        "signingConfig": "default",
         "compatibleSdkVersion": "5.0.5(17)",
         "targetSdkVersion": "6.0.0(20)",
         "runtimeOS": "HarmonyOS",

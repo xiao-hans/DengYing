@@ -267,6 +267,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
 
     override fun setMedia(url: String, headersJson: String, startPositionMs: Long) {
         PlaybackProbe.note("setMedia", "len=${url.length} headers=${headersJson.isNotEmpty()} start=$startPositionMs")
+        currentUrl = url
         player.setMediaSource(PlayerFactory.mediaSource(context, url, headersJson))
         if (startPositionMs > 0) player.seekTo(startPositionMs)
         player.prepare()
@@ -298,6 +299,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
 
     override fun release() {
         listeners.clear()
+        currentUrl = null
         try {
             player.release()
         } catch (e: Exception) {
@@ -317,8 +319,16 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     override val isPlaying: Boolean
         get() = player.isPlaying
 
+    override var currentUrl: String? = null
+        private set
+
     override fun addListener(listener: PlayerListener) {
         listeners.add(listener)
+    }
+
+    override fun removeListener(listener: PlayerListener) {
+        // CopyOnWriteArrayList.remove 对不存在的元素返回 false，天然幂等。
+        listeners.remove(listener)
     }
 
     override fun viewHandle(): Any? = player

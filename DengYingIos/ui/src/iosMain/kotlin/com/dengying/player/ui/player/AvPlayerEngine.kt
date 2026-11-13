@@ -199,6 +199,11 @@ class AvPlayerEngine : PlayerEngine {
         if (!listeners.contains(listener)) listeners.add(listener)
     }
 
+    override fun removeListener(listener: PlayerListener) {
+        // 与 add 的 contains 守卫对称；未注册过时 remove 返回 false，不抛异常。
+        listeners.remove(listener)
+    }
+
     override fun viewHandle(): Any? = layer
 
     // ------------------------------------------------------------------ 内部

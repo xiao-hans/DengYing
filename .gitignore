@@ -43,3 +43,12 @@ DengYing/default/
 
 # 会话临时产物（抓样/截图/探针脚本）
 .golden-tmp/
+
+# ---- 鸿蒙本地签名材料（口令与本机路径一律不入库）----
+**/harmony/build-profile.local.json5
+**/harmony/signing.local.json5
+*.p12
+*.p7b
+*.cer
+*.jks
+*.keystore
