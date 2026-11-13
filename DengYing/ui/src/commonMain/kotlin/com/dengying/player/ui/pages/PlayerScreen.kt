@@ -80,9 +80,19 @@ fun PlayerScreen(
             store = deps.store,
             engineHost = deps.engineHost,
             isDebug = deps.isDebug,
+            castLauncher = deps.castLauncher,
         )
     }
     val s = vm.state
+
+    // FR-423：失败提示浮层定时收起，避免一直挡住画面。
+    // 只在 castMsg 变化时重启协程，控制层的其它重组不会重置计时。
+    LaunchedEffect(s.castMsg) {
+        if (s.castMsg.isNotEmpty()) {
+            kotlinx.coroutines.delay(4000L)
+            vm.clearCastMsg()
+        }
+    }
 
     // 【系统返回键也走同一条返回逻辑】NavHost 的默认返回是 popBackStack()，
     // 会绕过调用方传进来的 onBack。而「换源失败后返回要回详情页」这条语义
@@ -566,7 +576,10 @@ private fun ControlOverlay(
                 style = MaterialTheme.typography.bodySmall,
                 color = if (s.castEnabled) Color.White else Color.White.copy(alpha = 0.35f),
                 modifier = Modifier
-                    .clickable(enabled = s.castEnabled) { /* 见下方说明 */ }
+                    // FR-419 / FR-423：接到真实投屏通道（平台壳注入的 CastLauncher）。
+                    // 可投性判定在 PlayerViewModel.refreshCastability() 里由 CastUtil 完成，
+                    // 这里只负责把点击事件送到 onCastClick()。
+                    .clickable(enabled = s.castEnabled) { vm.onCastClick() }
                     .padding(horizontal = 10.dp, vertical = 12.dp),
             )
         }

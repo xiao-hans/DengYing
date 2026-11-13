@@ -56,6 +56,15 @@ class DengYingApp : Application(), UiDeps {
     override val isDebug: Boolean
         get() = com.dengying.player.BuildConfig.DEBUG
 
+    /**
+     * 投屏入口（FR-419 / FR-423）：把应用上下文交给 MediaRouter 实现。
+     * 用 lazy 避免 Application.onCreate 就初始化 CastContext（那会触发 GMS
+     * 可用性检查，拖慢冷启动）；首次点击「投屏」时才创建。
+     */
+    override val castLauncher: com.dengying.player.ui.platform.CastLauncher by lazy {
+        com.dengying.player.playback.cast.MediaRouterCastLauncher(this)
+    }
+
     /** 首页分页结果缓存（FR-701/702）—— 派生数据，与用户资产分开存 */
     override lateinit var pageCache: com.dengying.player.data.cache.PageCache
         private set

@@ -66,6 +66,13 @@ class PlayerViewModel(
      * 经平台壳注入。
      */
     private val isDebug: Boolean,
+    /**
+     * 投屏入口（FR-419 / FR-423）。由平台壳经 [com.dengying.player.ui.UiDeps] 注入；
+     * 缺省 [com.dengying.player.ui.platform.UnsupportedCastLauncher] 供 JVM 单测使用，
+     * 点击会给出明确提示而不是静默无响应。
+     */
+    private val castLauncher: com.dengying.player.ui.platform.CastLauncher =
+        com.dengying.player.ui.platform.UnsupportedCastLauncher,
 ) : ViewModel() {
 
     data class PlayerParams(
@@ -1275,6 +1282,41 @@ class PlayerViewModel(
             castEnabled = CastUtil.isCastEntryEnabled(c),
             castBlockReason = CastUtil.castBlockText(c.reason),
         )
+    }
+
+
+    /**
+     * 点击播放页「投屏」（FR-419 / FR-423）。
+     *
+     * 判定不在这里重做：`refreshCastability()` 已经把 `CastUtil` 的结论写进
+     * [UiState.castEnabled] / [UiState.castBlockReason]，不可投时按钮是禁用态。
+     * 这里只做一次最终地址校验（防止判定后地址被换集流程清空），再把地址交给
+     * 平台实现；失败文案按 `CastUtil` 的失败分流口径给出可行动提示。
+     */
+    fun onCastClick() {
+        if (!state.castEnabled) return
+        if (!CastUtil.isCastableUrl(resolvedUrl)) {
+            state = state.copy(
+                castMsg = CastUtil.castFailureText(
+                    CastUtil.classifyCastFailure(CastUtil.Stage.Precheck, hasAddress = false)
+                ),
+            )
+            return
+        }
+        val fromChain = resolvedHeaders.isNotEmpty() || params.source.isNotEmpty()
+        val msg = try {
+            castLauncher.launch(resolvedUrl, state.title.ifEmpty { params.title }, fromChain)
+        } catch (e: Exception) {
+            // 平台通道异常（如 CastContext 初始化失败）归到「接收端不可达」，
+            // 与 CastUtil 的三类分流一致；不吞异常、不假装成功。
+            CastUtil.castFailureText(CastUtil.FailureKind.DeviceUnreachable)
+        }
+        state = state.copy(castMsg = msg)
+    }
+
+    /** 清除投屏提示浮层（由页面的定时隐藏逻辑调用） */
+    fun clearCastMsg() {
+        if (state.castMsg.isNotEmpty()) state = state.copy(castMsg = "")
     }
 
     // ---------------- 生命周期 ----------------

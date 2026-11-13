@@ -136,6 +136,14 @@ dependencies {
     implementation(libs.androidx.media3.ui.compose)
     implementation(libs.androidx.media3.session)
 
+    // ---- 投屏：MediaRouter + GMS Cast 框架（本工程原先没有 mediarouter）----
+    implementation(libs.androidx.mediarouter)
+    implementation(libs.gms.play.services.cast.framework)
+
+    // cast-framework 23.0.0 的 POM 把 mediarouter 抬到 1.9.0-beta01，
+    // 后者要求 compileSdk 37（本仓 compileSdk 36 / AGP 8.13.2 不支持）。
+    // 强制回落到稳定版 1.8.1：Cast 框架用到的 MediaRouter API 在 1.8.1 已齐全。
+
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
@@ -149,4 +157,20 @@ dependencies {
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
+}
+
+/**
+ * 【投屏依赖版本收敛】
+ *
+ * `play-services-cast-framework:23.0.0` 的 POM 传递依赖
+ * `androidx.mediarouter:mediarouter:1.9.0-beta01`，而该 beta 要求
+ * compileSdk 37（本仓 compileSdk 36、AGP 8.13.2 最高推荐 36），
+ * `checkDebugAarMetadata` 会直接失败。
+ *
+ * 本仓显式声明稳定版 1.8.1（其 MediaRouter / MediaControlIntent API 已覆盖
+ * 投屏实现所需），强制把所有 mediarouter 变体收敛到该版本。
+ * 版本值取自 `gradle/libs.versions.toml`，不在这里另写一份。
+ */
+configurations.configureEach {
+    resolutionStrategy.force("androidx.mediarouter:mediarouter:${libs.versions.mediarouter.get()}")
 }

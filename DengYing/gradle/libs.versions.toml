@@ -54,6 +54,7 @@ lifecycle = "2.9.4"
 # 播放与投屏
 media3 = "1.10.1"
 mediarouter = "1.8.1"
+castFramework = "23.0.0"  # GMS Cast 框架：仅本地设备发现/媒体下发，不接自建云端
 
 # 协程
 coroutines = "1.11.0"
@@ -101,6 +102,8 @@ androidx-media3-session = { module = "androidx.media3:media3-session", version.r
 
 # ---- 投屏（替代鸿蒙的 AVSessionKit 投播）----
 androidx-mediarouter = { module = "androidx.mediarouter:mediarouter", version.ref = "mediarouter" }
+# GMS Cast 框架：提供 Cast 路由与合并 selector；与 mediarouter 配套使用。
+gms-play-services-cast-framework = { module = "com.google.android.gms:play-services-cast-framework", version.ref = "castFramework" }
 
 # ---- 协程 ----
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }

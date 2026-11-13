@@ -59,6 +59,19 @@
             </intent-filter>
         </activity>
 
+        <!--
+          投屏：由 MediaRouter + GMS Cast 框架做接收端发现与媒体下发。
+          OPTIONS_PROVIDER_CLASS_NAME 指向本工程真实存在的
+          com.dengying.player.playback.cast.DengYingCastOptionsProvider
+          （play-services-cast-framework 依赖已在 app/build.gradle.kts 声明），
+          不再是悬空声明。播放页「投屏」按钮经 UiDeps.castLauncher 接到
+          MediaRouterCastLauncher，使用本地媒体下发通道，不接入自建 Cast
+          云端服务、不注册开发者账号、不上报数据（SEC-001）。
+        -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.dengying.player.playback.cast.DengYingCastOptionsProvider" />
+
     </application>
 
 </manifest>

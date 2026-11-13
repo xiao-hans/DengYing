@@ -35,6 +35,8 @@ coreKtx = "1.16.0"             # 1.17.0 要 minCompileSdk 36 但用更新的 Kot
 activityCompose = "1.10.1"
 lifecycle = "2.9.4"
 media3 = "1.8.0"               # 播放引擎（Android 侧），纯 Java 为主，不受 Kotlin 版本线约束
+mediarouter = "1.8.1"           # 投屏：MediaRouter 设备发现
+castFramework = "23.0.0"        # 投屏：GMS Cast 框架（仅本地媒体下发）
 
 # ---- CPF 的 KMP 移植构件（org.jetbrains.androidx.* / kotlinx.*）----
 lifecycleKmp = "2.9.4-1.1.0"
@@ -84,6 +86,10 @@ androidx-media3-exoplayer-hls = { module = "androidx.media3:media3-exoplayer-hls
 androidx-media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 androidx-media3-ui-compose = { module = "androidx.media3:media3-ui-compose", version.ref = "media3" }
 androidx-media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
+
+# ---- 投屏：Android 壳的 MediaRouter + GMS Cast 框架 ----
+androidx-mediarouter = { module = "androidx.mediarouter:mediarouter", version.ref = "mediarouter" }
+gms-play-services-cast-framework = { module = "com.google.android.gms:play-services-cast-framework", version.ref = "castFramework" }
 
 # ---- 测试 ----
 junit = { module = "junit:junit", version.ref = "junit" }

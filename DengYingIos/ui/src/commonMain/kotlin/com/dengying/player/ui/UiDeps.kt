@@ -5,6 +5,8 @@ import com.dengying.player.data.cache.PageCache
 import com.dengying.player.data.source.SourceRepository
 import com.dengying.player.data.store.Store
 import com.dengying.player.player.PlayerEngineHost
+import com.dengying.player.ui.platform.CastLauncher
+import com.dengying.player.ui.platform.UnsupportedCastLauncher
 import com.dengying.player.ui.viewmodel.AltItem
 import com.dengying.player.ui.viewmodel.LruCache
 
@@ -65,6 +67,17 @@ interface UiDeps {
      * 故与其余装配事实一起走本接口注入。
      */
     val isDebug: Boolean
+
+    /**
+     * 投屏入口（FR-419 / FR-423）。
+     *
+     * 由 `:app` 在 `Application.onCreate` 注入真实实现（MediaRouter + Cast SDK）；
+     * 未注入的平台（JVM 单测、桌面预览、尚未接通的 iOS/鸿蒙壳）落到
+     * [UnsupportedCastLauncher] —— 点击会给出明确提示，而不是静默无响应。
+     * 用带默认实现的属性而不是抽象属性：新增能力不应强迫所有平台壳一起改。
+     */
+    val castLauncher: CastLauncher
+        get() = UnsupportedCastLauncher
 
     /**
      * 跨源候选缓存（FR-417），**进程级**。
