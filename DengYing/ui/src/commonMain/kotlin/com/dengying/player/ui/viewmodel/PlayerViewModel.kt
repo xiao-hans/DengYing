@@ -26,6 +26,12 @@ import com.dengying.player.player.PlayerEngineHost
 import com.dengying.player.platform.Clock
 import com.dengying.player.platform.Log
 import com.dengying.player.platform.ioDispatcher
+import com.dengying.player.playback.cast.CastController
+import com.dengying.player.playback.cast.CastDevice
+import com.dengying.player.playback.cast.CastEvent
+import com.dengying.player.playback.cast.CastMedia
+import com.dengying.player.playback.cast.DisconnectCause
+import com.dengying.player.playback.cast.NoopCastController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -69,6 +75,15 @@ class PlayerViewModel(
      * 经平台壳注入。
      */
     private val isDebug: Boolean,
+    /**
+     * 投屏通道（FR-418..423）。
+     *
+     * 由 `:app` 的 `UiDeps` 注入基于 GMS Cast 框架的实现；缺省 [NoopCastController]
+     * 只给 JVM 单测与没有投屏通道的平台壳用，不伪造投屏能力。
+     * 用接口而非 expect/actual：`PlayerViewModel` 在 commonMain 不能认识 GMS 类型，
+     * 而这是装配关系，不是平台服务。
+     */
+    private val castController: CastController = NoopCastController,
     /**
      * 清晰度换档前的可达性探测。
      *
@@ -156,6 +171,12 @@ class PlayerViewModel(
         val castBlockReason: String = "",
         val castMsg: String = "",
         val castLink: CastUtil.CastabilityKind = CastUtil.CastabilityKind.NotCastable,
+        /** 已发现的可投设备（FR-420）。空列表 + [showCastSheet] = 正在搜索。 */
+        val castDevices: List<CastDevice> = emptyList(),
+        /** 设备选择面板是否展开。 */
+        val showCastSheet: Boolean = false,
+        /** 是否已建立投屏会话；true 时顶栏按钮变「停止投屏」。 */
+        val castConnected: Boolean = false,
         /**
          * 一次性轻提示（如「该清晰度暂时不可用，已回退原档位」）。
          *
@@ -1572,23 +1593,147 @@ class PlayerViewModel(
         }
     }
 
-    // ---------------- 投屏可投性（FR-419） ----------------
+    // ---------------- 投屏通道（FR-418..423） ----------------
 
     /**
      * 重算源可投性。判定为纯函数，见 [CastUtil]。
      *
-     * `castEnabled` 只表达「这个源能不能投」，不掺连接中状态——
+     * `castEnabled` 表达「这个源能不能投 + 通道在不在」，但不掺连接中状态——
      * 一旦掺入，投播组件会因为自身把状态置为 Connecting 而把自己从界面上抹掉。
+     * 通道不可用（无 GMS / 无设备）时同样禁用入口并给出理由，不能留一个点了没反应的按钮。
      */
     private fun refreshCastability() {
         // 判定输入只有两项——解析后的地址、是否依赖自定义请求头。
         // 换链来源作为第三项只影响「可投/可试」的区分，不参与禁用判定。
         val fromChain = resolvedHeaders.isNotEmpty() || params.source.isNotEmpty()
         val c = CastUtil.decideCastability(resolvedUrl, resolvedHeaders.isNotEmpty(), fromChain)
+        val sourceEnabled = CastUtil.isCastEntryEnabled(c)
+        val channelAvailable = castController.isAvailable()
         state = state.copy(
-            castEnabled = CastUtil.isCastEntryEnabled(c),
-            castBlockReason = CastUtil.castBlockText(c.reason),
+            castEnabled = sourceEnabled && channelAvailable,
+            castBlockReason = when {
+                !sourceEnabled -> CastUtil.castBlockText(c.reason)
+                !channelAvailable -> "当前设备不支持投屏，请检查 Google Play 服务"
+                else -> ""
+            },
+            castLink = c.kind,
         )
+    }
+
+    /**
+     * 顶栏「投屏」点击（FR-418 / FR-420 / FR-422）。
+     *
+     * 已连接 → 停止投屏并回落本机；未连接 → 开始发现设备并展开选择面板。
+     * `castController.isAvailable()` 为 false 时入口已被禁用，这里再兜一次底，
+     * 避免从其它路径（如恢复状态）触发点击后静默无反应。
+     */
+    fun onCastClick() {
+        if (state.castConnected) {
+            stopCast()
+            return
+        }
+        if (!state.castEnabled || !castController.isAvailable()) {
+            state = state.copy(
+                castMsg = CastUtil.castFailureText(
+                    CastUtil.classifyCastFailure(CastUtil.Stage.Precheck, hasAddress = resolvedUrl.isNotEmpty()),
+                ),
+            )
+            return
+        }
+        state = state.copy(showCastSheet = true, castMsg = "", castDevices = emptyList())
+        castController.startDiscovery(
+            onDevices = { devices ->
+                if (!cleared) state = state.copy(castDevices = devices)
+            },
+            onState = { event -> if (!cleared) onCastEvent(event) },
+        )
+    }
+
+    /** 用户在面板里选中一台设备（FR-420）。 */
+    fun onCastDeviceSelected(deviceId: String) {
+        if (!state.castEnabled) return
+        val ok = castController.selectDevice(deviceId)
+        if (!ok) {
+            onCastFailure(CastUtil.Stage.Link, hasAddress = resolvedUrl.isNotEmpty())
+            return
+        }
+        state = state.copy(castMsg = "正在连接投屏设备…")
+    }
+
+    /** 关掉设备选择面板。不结束已建立的会话。 */
+    fun dismissCastSheet() {
+        state = state.copy(showCastSheet = false)
+    }
+
+    /** 停止投屏：结束远端会话，随后由 [CastEvent.Disconnected] 回落本机。 */
+    private fun stopCast() {
+        state = state.copy(castMsg = "正在断开投屏…")
+        castController.endSession()
+    }
+
+    /** 来自 [CastController] 的事件统一入口。 */
+    private fun onCastEvent(event: CastEvent) {
+        when (event) {
+            CastEvent.Connected -> {
+                // 会话建立后立刻下发媒体（FR-421）。本机先暂停，避免两端同时出声。
+                val media = CastMedia(
+                    url = resolvedUrl,
+                    title = params.title.ifEmpty { state.title },
+                    subtitle = currentEpName.ifEmpty { state.title },
+                    startPositionMs = state.curTime,
+                    contentType = "", // 由 GmsCastController 按扩展名推断
+                )
+                val accepted = castController.load(media)
+                if (!accepted) {
+                    onCastFailure(CastUtil.Stage.Link, hasAddress = resolvedUrl.isNotEmpty())
+                } else {
+                    runCatching { engineHost.peek()?.pause() }
+                    state = state.copy(castMsg = "正在投屏…")
+                }
+            }
+            CastEvent.HandoffStarted -> {
+                state = state.copy(
+                    castConnected = true,
+                    showCastSheet = false,
+                    castMsg = "已投屏到电视",
+                )
+            }
+            is CastEvent.Failed -> onCastFailure(event.stage, event.hasAddress)
+            is CastEvent.Disconnected -> onCastDisconnected(event.cause)
+        }
+    }
+
+    /** 失败分流（FR-423）：地址问题优先，其次链路，最后远端拉流。 */
+    private fun onCastFailure(stage: CastUtil.Stage, hasAddress: Boolean) {
+        val kind = CastUtil.classifyCastFailure(stage, hasAddress)
+        state = state.copy(
+            castMsg = CastUtil.castFailureText(kind),
+            showCastSheet = false,
+            castConnected = false,
+        )
+    }
+
+    /**
+     * 断开后回落本机播放（FR-422）。
+     *
+     * 用户主动断开：静默恢复本机并从当前进度续播；链路断开：额外给一条可行动提示。
+     * 这里不重建引擎、不清 `startedUrl`——本机引擎本来就还挂着同一地址，
+     * 只需 seek 到投屏时刻并 `play()`，不能走 `retry()` 把 #3 的幂等判据冲掉。
+     */
+    private fun onCastDisconnected(cause: DisconnectCause) {
+        val resumeAt = state.curTime
+        val engine = engineHost.peek()
+        runCatching {
+            engine?.seekTo(resumeAt)
+            engine?.play()
+        }
+        state = state.copy(
+            castConnected = false,
+            showCastSheet = false,
+            castDevices = emptyList(),
+            castMsg = if (cause == DisconnectCause.LinkLost) "投屏已断开，已回到本机播放" else "已回到本机播放",
+        )
+        castController.stopDiscovery()
     }
 
     // ---------------- 生命周期 ----------------
@@ -1602,6 +1747,14 @@ class PlayerViewModel(
      */
     internal fun stopProgressLoopForTest() {
         progressLoop.stop()
+    }
+
+    /**
+     * 仅供 `:ui:jvmTest`：在不起解析链（依赖真实网络）的情况下刷新投屏可投性。
+     * 测试先用 [primeEngineForTest] 注入地址，再调本方法驱动入口状态。
+     */
+    internal fun refreshCastabilityForTest() {
+        refreshCastability()
     }
 
     /** 仅供 `:ui:jvmTest`：注入变体清单，模拟后台抓取完成（抓取本身依赖网络）。 */
@@ -1636,6 +1789,10 @@ class PlayerViewModel(
         cleared = true
         qualitySwitchJob?.cancel()
         noticeJob?.cancel()
+        // 投屏会话与 MediaRouter 监听都长于页面：不注销会持续回调已销毁的 VM（B-7 同型泄漏）。
+        // 页面离开时主动结束会话，接收端不会停在投屏界面耗电。
+        if (state.castConnected) castController.endSession()
+        castController.release()
         // 【先停进度循环与监听】否则循环会在 viewModelScope 取消前再写一次状态，
         // 且旧 VM 可能继续响应单例引擎的回调（B-6 / B-7）。
         progressLoop.stop()

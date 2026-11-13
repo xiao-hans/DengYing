@@ -47,6 +47,21 @@ class DengYingApp : Application(), UiDeps {
         get() = com.dengying.player.playback.PlaybackEngineHolder
 
     /**
+     * [UiDeps] 契约实现：投屏通道（FR-418..423）。
+     *
+     * `GmsCastController` 构造时会取 `CastContext.getSharedInstance()`，
+     * 依赖 Manifest 里已登记的 `DengYingCastOptionsProvider`。用 `lazy`
+     * 而不是 `onCreate` 里立即建：CastContext 初始化要等 Application 完全就绪，
+     * 且并非每次启动都会点投屏，懒建省一次 GMS 绑定。
+     *
+     * 拿不到 Play 服务时 `GmsCastController` 自己降级为 `isAvailable() == false`，
+     * 不会让启动崩溃。
+     */
+    override val castController: com.dengying.player.playback.cast.CastController by lazy {
+        com.dengying.player.playback.cast.GmsCastController(this)
+    }
+
+    /**
      * [UiDeps] 契约实现：是否 debug 构建。
      *
      * 迁移前 `PlayerViewModel` 直接读 `BuildConfig.DEBUG`，升舱到 `:ui` 后
