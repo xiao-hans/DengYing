@@ -78,10 +78,13 @@ object PlaybackSession {
 
     private var engine: PlayerEngine? = null
 
+    /** 会话级进度循环的句柄（测试可取消，见 [cancelProgressTickerForTest]） */
+    private var progressTicker: kotlinx.coroutines.Job? = null
+
     init {
         // 【会话级进度循环】唯一的进度推进器（替代初版分散在各页、
         // 且会在 onPlaying 抖动时无限累积的多个 while(true)——那是个真 bug）。
-        scope.launch {
+        progressTicker = scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(1000)
                 val e = engine ?: continue
@@ -91,6 +94,18 @@ object PlaybackSession {
                 _state.value = s.copy(curTime = e.currentPosition)
             }
         }
+    }
+
+    /**
+     * 仅供测试：停掉会话级进度循环。
+     *
+     * 该循环是 `while(true) + delay(1000)`，测试若把它跑在 `runTest` 的虚拟时钟上，
+     * 时间推进永远不会空闲（`advanceUntilIdle` 100% CPU 不返回）。生产代码不调用；
+     * 应用退出时随进程结束。
+     */
+    fun cancelProgressTickerForTest() {
+        progressTicker?.cancel()
+        progressTicker = null
     }
 
     /** 引擎监听是否已挂（引擎全局唯一，监听只挂一次） */
@@ -147,7 +162,17 @@ object PlaybackSession {
             )
             return
         }
-        _state.value = _state.value.copy(
+        // 【换集必须清进度】旧实现只改身份字段，curTime/totalTime 原样留下：
+        // 详情页内嵌位把会话状态直接映射成进度条，换集后的解析/缓冲期间
+        // 进度条仍停在上一集（用户反馈"旧视频加载条没重置"）。
+        // 同一集重播不清：引擎不 setMedia、位置本该延续，清了会被下一秒的
+        // 进度循环拉回去，只剩一次无意义的归零闪烁。
+        // totalTime 必须归 0：InlinePlayer 以 totalTime<=0 判定"还没拿到时长"
+        // 并显示缓冲态——这正是换集后应该看到的形态。
+        val prev = _state.value
+        val switchingEpisode = !prev.hasSession ||
+            prev.vodId != vodId || prev.source != source || prev.episodeIndex != episodeIndex
+        _state.value = prev.copy(
             status = Status.Resolving,
             url = rawUrl,
             headers = "",
@@ -160,6 +185,8 @@ object PlaybackSession {
             episodeName = episodeName,
             errMsg = "",
             buffering = false,
+            curTime = if (switchingEpisode) startAtMs else prev.curTime,
+            totalTime = if (switchingEpisode) 0L else prev.totalTime,
         )
 
         scope.launch {
@@ -307,6 +334,15 @@ object PlaybackSession {
         // 引擎此刻必已存在（调用方刚 setMedia 过），ensureEngine 幂等只补监听。
         ensureEngine()
         val cur = _state.value
+        // 与 play() 同一口径：换集/换片/换源要把进度归零。全屏页换集后回到
+        // 详情页，内嵌位读的是会话状态；不清的话会先画出上一集的进度。
+        //
+        // 【不能用 url 不同判定换集】换清晰度也会换 url，但集身份没变：
+        // 按 url 判会把 curTime/totalTime 归零，切换瞬间（尤其暂停态或立即
+        // 返回详情页）把保留进度读成 0。集身份 = (vodId, source, episodeIndex)。
+        val sameEpisode = cur.hasSession &&
+            cur.vodId == vodId && cur.source == source && cur.episodeIndex == episodeIndex
+        val switchingEpisode = !sameEpisode
         _state.value = cur.copy(
             url = url,
             headers = headers,
@@ -319,6 +355,8 @@ object PlaybackSession {
             episodeName = episodeName,
             status = if (cur.status == Status.Idle) Status.Buffering else cur.status,
             errMsg = "",
+            curTime = if (switchingEpisode) 0L else cur.curTime,
+            totalTime = if (switchingEpisode) 0L else cur.totalTime,
         )
     }
 
