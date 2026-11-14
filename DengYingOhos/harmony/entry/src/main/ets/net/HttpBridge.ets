@@ -27,6 +27,34 @@ function encodeBase64(data: Object): string {
   return helper.encodeToStringSync(new Uint8Array(data as ArrayBuffer));
 }
 
+/**
+ * 响应头 → 逐行 `name: value` 文本（多值头每行一个）。
+ *
+ * 不用逗号切分：set-cookie 的 Expires 属性本身就带逗号；同名多值必须
+ * 原样保留成多行，Kotlin 侧再按 jvm 的口径用 "; " 拼接。
+ */
+function encodeResponseHeaders(header: Object | undefined | null): string {
+  if (header === undefined || header === null) {
+    return '';
+  }
+  const record = header as Record<string, Object>;
+  const lines: string[] = [];
+  const names = Object.keys(record);
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    const value = record[name];
+    if (Array.isArray(value)) {
+      const values = value as Object[];
+      for (let j = 0; j < values.length; j++) {
+        lines.push(name + ': ' + String(values[j]));
+      }
+    } else if (value !== undefined && value !== null) {
+      lines.push(name + ': ' + String(value));
+    }
+  }
+  return lines.join('\n');
+}
+
 async function runRequest(jsonText: string): Promise<void> {
   hilog.info(DOMAIN, TAG, 'runRequest: %{public}s', jsonText.substring(0, 120));
   let id = 0;
@@ -58,14 +86,15 @@ async function runRequest(jsonText: string): Promise<void> {
       const response = await client.request(url, options);
       // 契约 3：2xx 与错误体都原样带回（ArkTS http 对两种情况都填 result）。
       const payload = response.result ? encodeBase64(response.result) : '';
-      dengying.submitHttpResult(id, response.responseCode, binary ? 1 : 0, payload);
+      const responseHeaders = encodeResponseHeaders(response.header);
+      dengying.submitHttpResult(id, response.responseCode, binary ? 1 : 0, payload, responseHeaders);
     } finally {
       client.destroy();
     }
   } catch (err) {
     hilog.error(DOMAIN, TAG, 'request failed: %{public}s', JSON.stringify(err));
     try {
-      dengying.submitHttpResult(id, 0, binary ? 1 : 0, '');
+      dengying.submitHttpResult(id, 0, binary ? 1 : 0, '', '');
     } catch (inner) {
       hilog.error(DOMAIN, TAG, 'submitHttpResult failed: %{public}s', JSON.stringify(inner));
     }

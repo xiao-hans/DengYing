@@ -8,6 +8,8 @@ import com.dengying.player.player.PlayerEngine
 import com.dengying.player.player.PlayerEngineHost
 import com.dengying.player.ui.UiDeps
 import com.dengying.player.ui.UiDepsHolder
+import com.dengying.player.ui.account.AhAuth
+import com.dengying.player.ui.theme.ThemePrefs
 
 /**
  * `:ui` 需求的鸿蒙侧装配（对齐 Android 的 `DengYingApp : UiDeps`）。
@@ -66,4 +68,11 @@ object OhosUiDeps : UiDeps {
  */
 fun installOhosUiDeps() {
     UiDepsHolder.init(OhosUiDeps)
+
+    // 对齐 Android DengYingApp.onCreate:102-104：AH 账号的签名令牌 / device_id /
+    // 会话原始数据，以及主题风格偏好，都落在同一份 kv（与 BttwoAuth 键互不相交）。
+    // 必须在这里、首帧组合之前完成——各 Screen 的首个组合就可能读这些单例。
+    // kv 由 EntryAbility.onCreate → dengy_app_init 先行填好。
+    AhAuth.init(OhosApp.kv)
+    ThemePrefs.init(OhosApp.kv)
 }

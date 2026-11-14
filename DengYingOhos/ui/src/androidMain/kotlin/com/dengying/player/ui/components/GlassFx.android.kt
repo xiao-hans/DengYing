@@ -11,8 +11,10 @@ import androidx.compose.ui.graphics.asComposeRenderEffect
  * AGSL 细节：
  * - 采样坐标按"边缘法线外推"做透镜弯曲，但**只在最外一圈**：`smoothstep(0.66,
  *   1.0, r)` 让中间 2/3 完全不动，只有贴着边缘的一薄圈被推出去。
+ *   v4 用 0.4 起步，44dp 的顶栏/搜索框整个面都在弯，观感是「一块会扭的塑料」
+ *   而不是玻璃（用户实测：顶栏像折射、Dock 不像）。
  * - 亮度→灰度→按饱和度回拉，即 vibrancy：底色透过玻璃时更鲜艳而不是发灰。
- *   倍数取 commonMain 的 GLASS_SATURATION（v3 透射口径 1.6）。
+ *   饱和度从 1.6 降到 1.28——磨砂玻璃不该把背后的颜色调得比原图还艳。
  */
 private const val REFRACT_SATURATE_SHADER = """
 uniform shader content;
@@ -39,7 +41,7 @@ actual fun glassRenderEffect(
     widthPx: Float,
     heightPx: Float,
 ): RenderEffect? {
-    // 33 = TIRAMISU（AGSL/RenderShader 起始版本；用字面量避免 compileSdk 解析差异）
+    // 33 = TIRAMISI（AGSL/RenderShader 起始版本；用字面量避免 compileSdk 解析差异）
     if (Build.VERSION.SDK_INT < 33) {
         return androidx.compose.ui.graphics.BlurEffect(blurPx, blurPx, androidx.compose.ui.graphics.TileMode.Decal)
     }

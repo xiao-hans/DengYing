@@ -13,7 +13,7 @@ declare const dengying: {
   parseYear(yearText: string): number;
   ofRaw(title: string, yearText: string): string;
   registerHttpExecutor(executor: (json: string) => void): void;
-  submitHttpResult(id: number, status: number, binary: number, payloadBase64: string): void;
+  submitHttpResult(id: number, status: number, binary: number, payloadBase64: string, headersText?: string): void;
   startHttpTest(url: string): number;
   httpTestRunning(): number;
   httpTestResult(): string | null;
