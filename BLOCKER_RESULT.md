@@ -1,6 +1,6 @@
 # PR #11 视频层遮挡 BLOCKER 处理结果
 
-分支：`feat/ohos-avplayer-engine`（PR #11，draft）。提交前本地 HEAD `afc9c6e058f9b34b375ab719a6d9ad891e91abe1`，已是 `origin/main`（`1a8066ee63981afed1facc4254a3eb486c1d5641`）合并进本分支后的状态；`git log --oneline HEAD..origin/main` 为空，本轮不需要再合并，也没有冲突。`origin/feat/ohos-avplayer-engine` 指向更早的提交，本地领先，推送为 fast-forward。
+分支：`feat/ohos-avplayer-engine`（PR #11，draft）。提交前本地 HEAD `afc9c6e058f9b34b375ab719a6d9ad891e91abe1`，已是 `origin/main`（`1a8066ee63981afed1facc4254a3eb486c1d5641`）合并进本分支后的状态；`git log --oneline HEAD..origin/main` 为空，本轮不需要再合并，也没有冲突。`origin/feat/ohos-avplayer-engine` 指向更早的提交，本地领先，推送为 fast-forward（该 fast-forward 推送已由上一轮 chain 完成；本轮按 harness 规则不推送，详见文末「本轮复验」）。
 
 ## 根因
 
@@ -69,3 +69,13 @@ sh gradlew :shared:jvmTest :shared:compileDebugKotlinAndroid :app:testDebugUnitT
 - 自定义请求头在本 OHOS SDK 版本无 `OH_AVMediaSource_*` native 入口，仍未支持。
 - 未改 `OhosPlayerEngine`、`OhosVideoSurfaceBridge`、NAPI C++ 绑定逻辑、播放器 listener/play/pause/seek/release 契约，也未改 `compose.har`。
 - 未合并 main、未关闭 PR、未触碰其他分支/PR。
+
+## 本轮复验（2026-11-14，独立复核，无代码改动）
+
+本轮重新执行 `/tmp/dengying-11/.chain/test-cmd`：`BUILD SUCCESSFUL in 20s`，`91 actionable tasks: 3 executed, 88 up-to-date`；日志中的 `e: ? KMP Dependencies Resolution Failure`（`commonMain` / `jvmSharedMain` 的 `jvm` 变体缺失告警）与第 4 项所述既有 CPF/OHOS 依赖矩阵限制一致，为非致命诊断，不影响退出码 0 与上述任务成功。复核 `git`：HEAD 与 `origin/feat/ohos-avplayer-engine` 同为 `bf64ec70a2e41fdf2d99ebff259b9a5e34b0d575`，`origin/main`（`1a8066ee63981afed1facc4254a3eb486c1d5641`）是 HEAD 祖先，无需再合并/rebase，无冲突；工作树仅有未跟踪 `.chain/`。
+
+复核代码：Stack 顺序、全屏 `XComponent(SURFACE)`、`onLoad`/`onDestroy` 的 `setVideoSurfaceId`/`clearVideoSurfaceId`、NAPI `strtoull` 透传、`OhosVideoSurfaceBridge.updateSurface/clearSurface`、`OhosPlayerEngineHost.surfaceActive/Inactive/forceRelease`、`OhosPlayerEngine` 的 `STATE_PREPARED → onReady` 链路均未改动；`PlayerScreen.kt` 根 Box 是唯一全屏不透明 Compose 层，缓冲/错误/控制层只有居中提示或局部 GlassSurface，没有额外全屏铺黑。`compose.har` 的透明缺省色仍只有字节码/`Compose.d.ets`/上游样本旁证，`SURFACE` 打洞在 ArkUI 中的层序仍无法在本机确认。
+
+通过公开 GitHub REST API（`curl https://api.github.com/repos/xiao-hans/DengYing/pulls/11`）读取了 PR #11 描述（标题 `feat(ohos): 鸿蒙原生 OH_AVPlayer 播放引擎（WIP，视频层遮挡待解决）`，`state=open`, `draft=true`, `base=main`, `head=feat/ohos-avplayer-engine`），其「视频层遮挡 BLOCKER」与本文根因/修法对应。本轮未使用 `gh`。
+
+按本轮 harness 规则（`Do not push. Do not merge. Do not force-push.`）未执行 push；任务步骤 5 要求的推送已由上一轮 chain 完成，远端与本地 HEAD 一致，PR 仍保持 draft、未合并、未关闭。除本文件这一节及第 3 行措辞外，本轮未改动任何代码或文档。
