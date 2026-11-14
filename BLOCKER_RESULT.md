@@ -79,3 +79,27 @@ sh gradlew :shared:jvmTest :shared:compileDebugKotlinAndroid :app:testDebugUnitT
 通过公开 GitHub REST API（`curl https://api.github.com/repos/xiao-hans/DengYing/pulls/11`）读取了 PR #11 描述（标题 `feat(ohos): 鸿蒙原生 OH_AVPlayer 播放引擎（WIP，视频层遮挡待解决）`，`state=open`, `draft=true`, `base=main`, `head=feat/ohos-avplayer-engine`），其「视频层遮挡 BLOCKER」与本文根因/修法对应。本轮未使用 `gh`。
 
 按本轮 harness 规则（`Do not push. Do not merge. Do not force-push.`）未执行 push；任务步骤 5 要求的推送已由上一轮 chain 完成，远端与本地 HEAD 一致，PR 仍保持 draft、未合并、未关闭。除本文件这一节及第 3 行措辞外，本轮未改动任何代码或文档。
+
+## 补充修正（2026-11-14）：把「打洞」限定在鸿蒙平台
+
+`bf64ec7` 的透明分支写在 `commonMain/PlayerScreen.kt`，Android/JVM 也会走到：Android 的 `VideoSurface` actual 在 `PlayerView.player != null` 时回调 `onBind(true)`，于是根 Box 在 `prepared && !buffering && !hasError` 时也变透明。而 `PlayerView` 用 `RESIZE_MODE_FIT`，视频之外有黑边；media3 的 `exo_shutter` 只铺满 `exo_content_frame`，黑边之外若根背景透明会露出 `Theme.DengYing` 的暖白 `windowBackground`（`#F4F4F1`），起播/缓冲/宽屏片源下会闪白。JVM/桌面侧没有下层视频，透明同样只会露出窗口底色。这是 `bf64ec7` 引入的非鸿蒙端回归，故本轮把让位条件按平台收窄，鸿蒙行为不变。
+
+改动（均为 UI 层，未触碰播放器契约）：
+
+- 新增 `DengYingOhos/ui/src/commonMain/kotlin/com/dengying/player/ui/platform/VideoSurfaceLayer.kt`：`expect val videoSurfaceIsBelowCompose: Boolean` 与纯函数 `shouldRevealVideoSurface(videoBelowCompose, surfaceBound, prepared, buffering, hasError)`，把「何时打洞」抽成可单测的逻辑。
+- 新增 `DengYingOhos/ui/src/ohosMain/kotlin/com/dengying/player/ui/platform/VideoSurfaceLayer.ohos.kt`：`actual = true`（视频在 Compose 之下）。
+- 新增 `DengYingOhos/ui/src/jvmSharedMain/kotlin/com/dengying/player/ui/platform/VideoSurfaceLayer.jvm.kt`：`actual = false`（Android `PlayerView` 与桌面都在 Compose 树内出图）。source-set 层级沿用工程既有的 `expect object PosterFetch` 模式：`androidMain`/`jvmMain → jvmSharedMain`，`ohosArm64Main`/`ohosX64Main → ohosMain`，四个 target 都有 actual。
+- `DengYingOhos/ui/src/commonMain/kotlin/com/dengying/player/ui/pages/PlayerScreen.kt`：根 Box 背景改用 `shouldRevealVideoSurface(videoSurfaceIsBelowCompose, surfaceBound, s.prepared, s.buffering, s.errMsg.isNotEmpty())`；`VideoSurface(..., onBind = ...)` 回写 `surfaceBound` 的方式不变。
+- `DengYingOhos/ui/src/ohosMain/kotlin/com/dengying/player/ui/platform/Platform.ohos.kt`：同步过时的打洞注释。
+- 新增 `DengYingOhos/app/src/test/java/com/dengying/player/playback/VideoSurfaceRevealTest.kt`：4 个单测锁住「鸿蒙仅在 surface 已绑 + 已 prepared + 非缓冲 + 无错时透明」「缓冲/错误保持黑底」「Android/JVM 恒不透明」「Android 宿主 actual 为 false」。
+
+## 本轮构建 / 测试（补充修正后）
+
+- `sh .chain/test-cmd`：`BUILD SUCCESSFUL in 16s`，`91 actionable tasks: 3 executed, 1 from cache, 87 up-to-date`，退出码 0；产物含 `app/build/outputs/apk/debug/app-debug.apk`。测试 XML 合计 42 个、660 tests、0 failures、0 errors、0 skipped（比上文的 41/656 多出本轮新增的 4 个用例）。
+- 为避免 UP-TO-DATE 掩盖增量，另强制 `sh gradlew :app:testDebugUnitTest --rerun-tasks --tests 'com.dengying.player.playback.VideoSurfaceRevealTest'`：`BUILD SUCCESSFUL in 38s`，`59 actionable tasks: 59 executed`（含 `:ui:compileDebugKotlinAndroid`、`:app:compileDebugUnitTestKotlin` 全量重编），`VideoSurfaceRevealTest` 4/4 通过、0 failures。`expect`/`actual` 在 jvmSharedMain 侧确实编译出 `VideoSurfaceLayerKt.class` 与 `VideoSurfaceLayer_jvmKt.class`。`git diff --check` 通过。
+- 尝试 `:ui:compileOhosMainKotlinMetadata` 以验证 ohosMain 的 actual：任务在本机失败，报 `Unresolved reference 'ComposeArkUIViewController'`、`Unresolved reference 'initMainHandler'` 等，全部位于未改动的 `ComposeHost.ohos.kt`。用 `git stash` 在未修改的 HEAD 上以 `--offline --rerun-tasks` 复现完全相同的错误，确认是既有 CPF/OHOS 依赖矩阵与本机 `~/.konan/dependencies` 为空导致的，与本轮改动无关。故本轮仍未编译/链接 `:ui:compileKotlinOhosArm64`、`:ui:compileKotlinOhosX64`、HAP，也未做真机验证，**不能声称画面已经实际可见**；ARKTS/har 透明缺省色与 SURFACE 打洞层序仍需 hvigor + 真机确认。
+
+## 仍未修复 / 本轮未做
+
+- 上述 `InlinePlayer` 小窗对齐、自定义请求头、播放器协议与 `compose.har` 均未改动（同「未修复 / 不在本轮范围」）。
+- 本轮 harness 规则禁止 push，故上述补充修正尚未推送；`origin/feat/ohos-avplayer-engine` 仍停在 `bf64ec70a2e41fdf2d99ebff259b9a5e34b0d575`（已含核心遮挡修复），本轮新提交在其之上。未合并 main、未关闭 PR、未触碰其他分支/PR。

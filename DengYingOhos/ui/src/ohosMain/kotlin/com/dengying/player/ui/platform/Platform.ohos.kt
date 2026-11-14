@@ -38,7 +38,9 @@ import com.dengying.player.player.PlayerEngine
  * 【打洞分工（2026-11-14）】CMP 的 Compose 渲染面（CanvasNode/RenderNode 或
  * TEXTURE XComponent）与视频层同树合成，透明区域可以透出下层视频——所以
  * 本 actual 在 bound 后透明即可打洞；根 Box 的黑底让位逻辑在 PlayerScreen.kt
- * （`surfaceBound && prepared && !buffering` 才透明），两处配合视频才可见。
+ * （`shouldRevealVideoSurface(..., surfaceBound, prepared, buffering, hasError)`
+ * 为真才透明），两处配合视频才可见。该让位由 `videoSurfaceIsBelowCompose`
+ * 限定在 ohos：Android/JVM 的根 Box 恒为不透明黑底。
  * 内嵌小窗（InlinePlayer 的 16:9 Box）仍是黑底：全屏 XComponent 与小窗的
  * 坐标对齐需要 Compose↔ArkUI interop，尚未做。
  *
