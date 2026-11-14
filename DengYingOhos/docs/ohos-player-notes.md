@@ -1,6 +1,7 @@
 # 鸿蒙播放引擎接线说明（native OH_AVPlayer）
 
-状态：2026-11-13，分支 `feat/ohos-avplayer-engine`。未真机验证。
+状态：2026-11-14，分支 `feat/ohos-avplayer-engine`。播放页遮挡已修，未真机验证；
+内嵌小窗仍需 Compose ↔ ArkUI interop。
 
 ## 画面（XComponent surfaceId）
 
@@ -29,24 +30,42 @@
 
 限制：XComponent 是全屏的，视频铺满窗口；内嵌小窗的位置对齐需要
 Compose ↔ ArkUI interop（CMP `insertInteropView`），尚未实现。
-`VideoSurface` actual 在 surface 就绪时透明、未就绪时黑底。
+`VideoSurface` actual 在 surface 就绪时透明、未就绪时黑底；播放页根 Box
+在 surface 绑定且出画时透明（见下节），二者配合才能让下层视频透出。
 
-### BLOCKER：视频层被 Compose 画布遮挡（2026-11-13，未修）
+### BLOCKER：视频层被 Compose 画布遮挡（2026-11-13 → 2026-11-14 已修，未真机验证）
 
-现状：`ComposePage.ets` 的 Stack 顺序是「XComponent 在下、Compose 在上」，
-音频正常但**画面始终不可见**（全黑）。
+现状（修后）：`ComposePage.ets` 的 Stack 顺序仍是「XComponent 在下、Compose 在上」，
+外层 `Column` 显式透明；播放页根 Box 在画面生效后不再铺黑，视频从 Compose
+透明区域透出。har 的私有 `bgColor` 在字节码里带 `#00000000`（全透明）缺省色，
+因此不向 `Compose({...})` 传私有属性，避免 ArkTS 编译期报错。
 
-原因：
+真正的原因（修正 2026-11-13 的判断）：
 
-- CMP 的 `Compose` 组件自身用 XComponent/EGL 出图，整块 Compose 内容都画在
-  视频 surface 之上；ArkUI 的层序决定了后绘制的 Compose 覆盖先绘制的视频层。
-- 播放页根 `Box` 是 `fillMaxSize().background(Color.Black)`
-  （`PlayerScreen.kt`），`InlinePlayer` 的 16:9 区域同样铺黑底。
-- `VideoSurface` 里 `Color.Transparent` 只是不画自己的 Box，擦不掉父 Box 已画
-  的黑色，也无法穿透 Compose 自己的渲染面。
+- CMP 的 `Compose` 组件**不是**整块不透明的 EGL 输出面。解包 `compose.har` 看
+  `Compose.d.ets`/`CanvasNode.d.ets`：渲染走 `CanvasNode`（RenderNode fusion）或
+  `XComponent(TEXTURE)`，`bgColor` 缺省色是 `#00000000`（全透明）——都是 ArkUI
+  渲染树内的普通纹理，与下层的 SURFACE XComponent 同树合成，透明区域按 alpha
+  透出下层内容。（2026-11-13 的调查只翻了 klib，没拆 har，误判了这一点。）
+- 遮住视频的其实是 Kotlin 侧自己画的黑底：`PlayerScreen.kt` 根
+  `Box(fillMaxSize().background(Color.Black))` 全屏不透明，恰好盖在视频之上；
+  `VideoSurface` 的透明擦不掉父 Box 的黑。其他页面根都有不透明柔光底
+  （`GlassPage`/`glassPageBackdrop`），不会意外透出视频。
 
-为什么不能简单对调层序：若把 SURFACE 盖到 ArkUI/Compose 之上，全屏视频会遮住
-所有 UI，两种顺序都不成立。
+修法（2026-11-14）：
+
+- `ui/src/commonMain/.../PlayerScreen.kt`：根 Box 背景改为条件让位：
+  `surfaceBound && prepared && !buffering && 无错误` 时透明，其余时机仍铺黑。
+  `surfaceBound` 由 `VideoSurface` 的 `onBind` 回写。
+- `harmony/entry/.../ComposePage.ets`：包住 `Compose` 的外层 `Column` 显式
+  `.backgroundColor(Color.Transparent)`，不依赖 ArkUI 容器默认底色；不改 har，
+  也不向 `Compose({...})` 传私有 `bgColor`。
+- 各端影响：ohos —— 绑定且出画后视频透出；Android —— PlayerView 自带黑
+  shutter，观感不变；桌面 —— `onBind` 恒 false，根背景恒黑，行为不变。
+- `InlinePlayer`（详情页 16:9 内嵌位）维持黑底占位：视频层是全屏的，小窗
+  只会看到全屏画面的错误裁切，需要 Compose↔ArkUI interop 对位后才能开洞。
+- 未在真机/hvigor 上验证 ArkTS 壳与视频出画；本轮只有本机 Gradle/JVM 侧
+  编译与单测验证。
 
 #### 工具链调查（2026-11-13，只读，未改依赖）
 
@@ -65,12 +84,13 @@ metadata 字符串），确认存在 interop 基础设施符号：
 缓存里也没有 sources jar 可核对可见性/签名。用反射式/未公开路径插入 interop
 视图会依赖内部二进制布局，不具备可维护性。
 
-#### 三条候选路径与结论
+#### 其余候选路径与结论（2026-11-13 的调查记录，结论按 2026-11-14 修正）
 
-1. **Compose 播放区域打洞（per-region 透明）**：需要在 CMP 的整块 EGL 输出面
-   上按矩形输出 alpha。`Color.Transparent` 只影响 Compose 内部绘制，不能擦掉
-   父 `Box` 的黑色，更不能让整块不透明的 Compose surface 局部透明。klib 中
-   未发现公开的 per-region transparency/punch 开关。**本轮不可行。**
+1. **Compose 播放区域打洞（per-region 透明）**：2026-11-13 的假设是 CMP 整块
+   EGL 输出面不透明、必须按矩形输出 alpha；拆 har 后确认这是误判。TEXTURE
+   XComponent / CanvasNode 都是同树合成的普通纹理，让 Compose 自身的父背景与
+   根容器透明即可露出下层 SURFACE。**本轮已按此修复全屏播放页**；klib 中
+   仍未发现公开的矩形裁剪开关，所以内嵌小窗的位置对齐仍未解决。
 2. **公开 interop 视图把 native surface 放进 `VideoSurface` 的坐标/裁剪**：
    正是 CMP 内部 `insertInteropView` + `InteropContainer` 做的事，但 1.9.2-1.1.0
    未暴露公开 API。**卡在 API 缺失，不能在应用层干净实现。**
@@ -82,7 +102,8 @@ metadata 字符串），确认存在 interop 基础设施符号：
    窗口坐标 → 新增 NAPI → ArkTS 调整 XComponent 几何与 clip，并处理
    px/vp 换算与页面切换。
 
-在解决前，播放页与内嵌播放位均视为「只有声音、无画面」，BLOCKER 保留。
+播放页的遮挡按上面的修法解除（未真机验证）；内嵌播放位在 interop 落地前
+仍视为「黑底占位」。
 
 ## 请求头（未支持）
 

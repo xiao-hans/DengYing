@@ -40,8 +40,9 @@ object OhosUiDeps : UiDeps {
      * 语义与 Android `PlaybackEngineHolder` 对齐。
      *
      * 画面已接入 ArkUI XComponent surfaceId（见 `OhosVideoSurfaceBridge`）；
-     * 但视频层目前在 Compose 画布之下，实际不可见，见 BLOCKER 说明。
-     * 自定义请求头本 SDK 版本无 native 入口，暂不生效。
+     * 播放页根背景按绑定/出画状态让位，让下层视频透出。内嵌小窗仍为黑底占位，
+     * 详见 `docs/ohos-player-notes.md`。自定义请求头本 SDK 版本无 native 入口，
+     * 暂不生效。
      */
     override val engineHost: PlayerEngineHost = OhosPlayerEngineHost
 

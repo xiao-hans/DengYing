@@ -35,11 +35,12 @@ import com.dengying.player.player.PlayerEngine
  *   画面透出来；
  * - 通过 `onBind` 上报绑定状态。
  *
- * BLOCKER（未修）：XComponent 在 ComposePage 的 Stack 里位于 Compose 之下，
- * CMP 自身也是 XComponent/EGL 出图，视频层被整块盖住 → 只有声音、画面全黑；
- * 本函数的透明/黑底都擦不掉父 Box 与 Compose 渲染面。修复需要 Compose↔ArkUI
- * interop（把 native surface 放进 VideoSurface 的坐标/裁剪内，或对播放区域
- * 打洞并调整层序），见 docs/ohos-player-notes.md。
+ * 【打洞分工（2026-11-14）】CMP 的 Compose 渲染面（CanvasNode/RenderNode 或
+ * TEXTURE XComponent）与视频层同树合成，透明区域可以透出下层视频——所以
+ * 本 actual 在 bound 后透明即可打洞；根 Box 的黑底让位逻辑在 PlayerScreen.kt
+ * （`surfaceBound && prepared && !buffering` 才透明），两处配合视频才可见。
+ * 内嵌小窗（InlinePlayer 的 16:9 Box）仍是黑底：全屏 XComponent 与小窗的
+ * 坐标对齐需要 Compose↔ArkUI interop，尚未做。
  *
  * 已知限制（WIP）：XComponent 是全屏的，视频会铺满窗口而不是 Compose 布局里
  * 的播放器框。要精确对齐需要在 Compose 里插入 interop 视图（CMP ui-ohos 的

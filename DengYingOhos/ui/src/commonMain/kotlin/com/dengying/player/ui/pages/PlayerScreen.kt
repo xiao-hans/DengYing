@@ -168,10 +168,25 @@ fun PlayerScreen(
         }
     }
 
+    // 【ohos 画面打洞】视频 surface 铺在 Compose 之下（ComposePage.ets 的全屏
+    // XComponent）。Compose 这边的根 Box 若铺不透明黑，会把整块视频盖住
+    // （音频正常、画面全黑）。故背景改为**有画面时让位**：引擎绑上播放面且
+    // 不在缓冲/错误态时根背景透明，视频从下层透出；其余时机仍铺黑（缓冲
+    // 转圈、错误文案、空态都落在黑底上，与 Android 桌面观感一致）。
+    // Android 不受影响：PlayerView 自带黑 shutter，根背景透明与否被它盖住。
+    // 桌面端 onBind 永不回调 true，根背景恒为黑，行为不变。
+    var surfaceBound by remember { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(
+                if (surfaceBound && s.prepared && !s.buffering && s.errMsg.isEmpty()) {
+                    Color.Transparent
+                } else {
+                    Color.Black
+                },
+            )
             // FR-708 + P-02..P-05 手势总入口（docs/08）
             //
             // 【一次手势只落入一种模式】未判定前累计位移；越过阈值后按
@@ -332,6 +347,8 @@ fun PlayerScreen(
                     "view-bind",
                     "engine=${vm.engine != null} boundPlayer=$bound",
                 )
+                // 上面根背景的打洞开关：绑上播放面才允许根背景让位。
+                surfaceBound = bound
             },
         )
 

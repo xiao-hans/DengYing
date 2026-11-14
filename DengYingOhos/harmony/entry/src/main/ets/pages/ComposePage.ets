@@ -12,13 +12,14 @@ struct ComposePage {
   @State errorMessage: string = '';
   // 播放画面：全屏 XComponent 铺在 Compose 下方，surfaceId 经 NAPI 交给 native AVPlayer。
   //
-  // BLOCKER（2026-11-13，未修）：XComponent 在 Stack 里位于 Compose 之下，而 CMP 的
-  // Compose 组件自身也是 XComponent/EGL 出图，会把视频层整块盖住 → 音频正常、画面全黑。
-  // Kotlin 侧 PlayerScreen/InlinePlayer 还铺了黑色底，透明占位无法透出。
-  // 也不能简单把 SURFACE 盖到上层（会遮住全部 UI）。
-  // 需要 Compose↔ArkUI interop：把 native surface 放到 VideoSurface 的坐标/裁剪内，
-  // 或 Compose 侧对播放区域打洞并调整层序。详见 docs/ohos-player-notes.md。
-  // 位置限制同上（当前尚未做 Compose interop 定位）。
+  // 层序说明（2026-11-14）：Stack 顺序「XComponent 在下、Compose 在上」是
+  // SurfaceView 式打洞模型——视频层在下、UI 层在上；har 以 TEXTURE XComponent /
+  // CanvasNode 渲染，未绘制区域可以透出下层视频。外层 Column 显式透明，
+  // Kotlin 侧播放页根 Box 在出画时也让位。此前画面全黑的原因不是层序，
+  // 而是 Kotlin 侧播放页根 Box 自己铺了不透明黑底，把视频盖住了；修复在
+  // PlayerScreen.kt：surface 绑定且不在缓冲/错误态时根背景让位。
+  // 内嵌小窗（InlinePlayer）仍走黑底占位：全屏 XComponent 与 16:9 小窗的
+  // 坐标对齐需要 Compose↔ArkUI interop，尚未做，详见 docs/ohos-player-notes.md。
   private surfaceController: XComponentController = new XComponentController();
   private surfaceId: string = '';
 
@@ -34,10 +35,13 @@ struct ComposePage {
   }
 
   build(): void {
-    // Stack 的绘制顺序：先 XComponent（视频层），再 Compose（UI 层）。
-    // 播放页的 VideoSurface 在 surface 就绪后透明，视频从下层透出；未就绪时
-    // Kotlin 侧画黑底。Compose 中其余不透明区域会遮住视频 —— 当前全屏
-    // XComponent 只能保证「播放页铺满」这一种版式，内嵌小窗需后续 interop。
+    // Stack 的绘制顺序：先 XComponent（视频层），再 Compose（UI 层）——SurfaceView
+    // 式打洞模型。har 的 Compose 以 TEXTURE XComponent / CanvasNode 渲染，
+    // 其私有 bgColor 在字节码里带 #00000000（全透明）缺省色，故这里不改
+    // har、不传私有属性；外层 Column 显式透明，播放页根 Box 在 surface
+    // 生效后透明（PlayerScreen.kt），视频从下层透出；未就绪时 Kotlin 侧画黑底。
+    // 其余页面根都有不透明柔光底，不会意外透出视频。全屏 XComponent 只保证
+    // 「播放页铺满」这一种版式，内嵌小窗需后续 interop 定位。
     Stack({ alignContent: Alignment.TopStart }) {
       XComponent({
         id: 'dy_video_surface',
@@ -86,6 +90,7 @@ struct ComposePage {
       }
       .width('100%')
       .height('100%')
+      .backgroundColor(Color.Transparent)
     }
     .width('100%')
     .height('100%')
