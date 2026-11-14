@@ -103,3 +103,10 @@ sh gradlew :shared:jvmTest :shared:compileDebugKotlinAndroid :app:testDebugUnitT
 
 - 上述 `InlinePlayer` 小窗对齐、自定义请求头、播放器协议与 `compose.har` 均未改动（同「未修复 / 不在本轮范围」）。
 - 本轮 harness 规则禁止 push，故上述补充修正尚未推送；`origin/feat/ohos-avplayer-engine` 仍停在 `bf64ec70a2e41fdf2d99ebff259b9a5e34b0d575`（已含核心遮挡修复），本轮新提交在其之上。未合并 main、未关闭 PR、未触碰其他分支/PR。
+
+## 最终复验（2026-11-14，round 5）
+
+- 核对了 `/tmp/dengying-11/.chain/run-20261114-120116` 的 chain.log：第 1–4 轮 Codex 审阅均退出码 124 / `STATUS:TIMEOUT`（机械 REQUEST_CHANGES，非实质缺陷意见），每轮 Pi 退出码 0；`round-4/codex-review.md` 只有原始日志转储并以 `EXIT:124` / `STATUS:TIMEOUT` 结束，没有列任何 finding；`round-4/claude.md` 结论为 `VERDICT: APPROVE`。第 5 轮附带的「Previous Codex review (round 4)」只是本文件第 78–105 行的文档摘录，并非新的审阅意见。因此没有可修的实质 REQUEST_CHANGES 项，本轮不改代码。
+- 再次确认 `HEAD` = `ade68982d892f58cfef974058f0e6e6b2edb7c6c`，本地比远端领先 2 个提交（`ec422a6` 独立复验记录、`ade6898` 把打洞限定在 OHOS）；工作区除 harness 的 `?? .chain/` 外无未提交改动，`git diff --check` 通过。远端仍为 `bf64ec70a2e41fdf2d99ebff259b9a5e34b0d575`（已含核心遮挡修复）；按 harness 规则未执行 push，最终推送由 chain 驱动完成。
+- `/tmp/dengying-11/.chain/test-cmd` 已是正确可执行脚本（775），复用此前 `sh .chain/test-cmd` 的成功结果：`BUILD SUCCESSFUL in 13s`、`91 actionable tasks: 3 executed, 88 up-to-date`、42 个测试套件 / 660 tests / 0 failures / 0 errors / 0 skipped；本轮未重复跑长构建。
+- 仍未编译/链接 OHOS Kotlin target、HAP，也未做真机/ArkTS/hvigor 验证；不能声称画面已经实际可见，只可说按层序分析预期可见。上文「仍未修复」各项保持不变。
