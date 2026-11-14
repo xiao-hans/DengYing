@@ -11,7 +11,7 @@
 
 | 任务 | 必读 |
 |---|---|
-| 鸿蒙 / NAPI / HAP | `harmony/README.md`、`ohos-build/README.md`、`docs/09` §9 |
+| 鸿蒙 / NAPI / HAP | `archive/harmony/README.md`（历史参考）、`docs/09` §9；两者已归档，现行鸿蒙工程见 `DengYingOhos` |
 | iOS / Xcode / Apple framework | `iosApp/README.md`、`docs/11-Mac待办清单.md`、`docs/09` §9 |
 | KMP 迁移、`expect/actual`、源集 | `docs/09-KMP多平台迁移方案.md`、各模块 `build.gradle.kts` |
 | 播放、缓存、网络、线程 | `docs/03` §3–§5、`docs/06`、`docs/07`、相关测试 |
@@ -29,7 +29,7 @@
 - 包名 `com.dengying.player`；debug 包多一个 `.debug` 后缀，两者可同机共存（数据各自独立）。
 - Android：compileSdk/targetSdk 36，minSdk 31，Kotlin + Jetpack Compose，Media3 ExoPlayer。
 - 共享层：KMP（`:shared` 逻辑）+ CMP（`:ui` 界面）。Kotlin 2.4.21，AGP 8.13.2，Gradle 8.14.3。
-- 三端壳：`:app`（Android）、`iosApp/`（iOS Swift 壳）、`harmony/`（鸿蒙 ArkTS/ArkUI 壳 + NAPI 桥）。
+- 三端壳：`:app`（Android）、`iosApp/`（iOS Swift 壳）、`archive/harmony/`（鸿蒙 ArkTS/ArkUI 壳 + NAPI 桥，已归档；现行鸿蒙壳为 `DengYingOhos/harmony`）。
 - 本工程是鸿蒙工程 `hmVideo` 的移植与多平台扩展；行为契约逐条沿用，差异与理由见 `docs/01`。
 
 | 层 / 模块 | 职责 | 不得做什么 |
@@ -41,8 +41,7 @@
 | `shared/*Main/` | 各平台 `actual` | 在 `commonMain` 复制平台代码 |
 | `ui/` | CMP 页面、组件、ViewModel、路由、平台 UI actual | 放进 `shared` 引入 Compose，破坏鸿蒙逻辑复用退路 |
 | `app/` | Android 组合根、Media3 引擎装配、Manifest、入口 | 让 `playback` 反向依赖 `app` 或 `ui` |
-| `harmony/` | ArkTS/ArkUI 壳与手写 NAPI 桥 | 假设共享层 Android 行为等于鸿蒙行为 |
-| `ohos-build/` | 独立的 CPF Kotlin 构建，索引/编译 `ohosMain` | 并入根 Gradle 构建，或复制 `shared` 源码 |
+| `archive/ohos-build/`、`archive/harmony/` | 已归档的遗留鸿蒙构建与壳，**不参与构建** | 被 `DengYingOhos` 取代；恢复引用或继续开发 |
 | `iosApp/` | iOS SwiftUI 壳与 Xcode 工程 | 在 Windows 声称 Xcode 构建/运行已验证 |
 
 关键规则：
@@ -80,7 +79,7 @@ Select-String -Path 'ui/src/commonMain/kotlin/com/dengying/player/ui/viewmodel/*
 - 构建、测试和常用 Git 操作优先使用 RTK 子命令，例如 `rtk gradlew :shared:jvmTest`、`rtk git status`。含特殊字符的长文本使用 PowerShell 原生命令写入，不要使用 bash heredoc。
 - 控制台回显中文可能乱码，不代表文件内容损坏；以读回文件为准。
 - 运行 Gradle 前先确认 `JAVA_HOME`。本机脚本以 JDK 18 验证；不要用默认 JDK 8 配置。JDK 路径固定为 `C:Program FilesJavajdk-18.0.2.1`（Git Bash：`export JAVA_HOME="/c/Program Files/Java/jdk-18.0.2.1"`）。用默认 JDK 8 会在解析 AGP 时失败：`Dependency requires at least JVM runtime version 11. This build uses a Java 8 JVM.`
-- 构建和测试产物已被忽略，不要提交 `build/`、`.gradle/`、`ohos-build/build/`、`.idea/`、`.tmp/`。
+- 构建和测试产物已被忽略，不要提交 `build/`、`.gradle/`、`archive/ohos-build/build/`、`.idea/`、`.tmp/`。
 - 用户未要求时不要提交、推送、改签、删除分支或清理未跟踪文件。
 
 ## 3. 修改纪律
@@ -105,7 +104,7 @@ Select-String -Path 'ui/src/commonMain/kotlin/com/dengying/player/ui/viewmodel/*
 | Android 壳、Manifest、引擎装配 | `rtk gradlew :app:assembleDebug` | `:app:testDebugUnitTest`；真机行为看 `docs/05` |
 | 网络、HLS、连接复用 | 对应 JVM 单测 | Android 差异必须跑 `HttpClientConnectionReuseDeviceTest`，不能只看 JVM |
 | 跨模块或交付前 | `runscript/full-check.sh` 或等价逐步验证 | 检查 BUILD 成功、无新增 `e:` / `FAILED` |
-| `ohosMain` / NAPI / ArkTS | `rtk gradlew --project-dir ohos-build :compileKotlinOhosArm64 --console=plain` 加 HAP 构建 | 按 `harmony/README.md` 的装机纪律验证生效 |
+| `ohosMain` / NAPI / ArkTS | 在 `DengYingOhos` 工程执行对应构建（本仓 `archive/` 不参与构建） | 按 `DengYingOhos/harmony/README.md` 的装机纪律验证生效 |
 | iOS 共享代码 | `:shared` 的 iOS 编译（Windows 可到 klib） | 链接、Xcode 构建和运行只能在 macOS 验证 |
 | 真机复验（Android） | `./tools/adbx.sh install` → `restart` → `probe` | 截图（`shot`）与探针行作为证据，附路径/关键行；命令口径见 §4.1 |
 | 发布/文档验收 | 与任务相关命令的实际输出 | 更新 `docs/04` / `docs/05` 对应条目 |
@@ -227,7 +226,7 @@ MCP 是**外部能力连接**，不是事实来源。一次任务里优先用能
 
 - 新行为：更新 `docs/02` 的追踪矩阵；有实测就追加 `docs/04` / `docs/05`，附日期与环境。
 - 架构或模块边界变化：先改 `docs/03`，再改代码；不要先写「已实现」再补代码。
-- 迁移/平台差异：`docs/09`；鸿蒙壳：`harmony/README.md`；iOS：`iosApp/README.md` + `docs/11`。
+- 迁移/平台差异：`docs/09`；鸿蒙壳：`archive/harmony/README.md`（已归档，现行见 `DengYingOhos`）；iOS：`iosApp/README.md` + `docs/11`。
 - 文档链接使用仓库相对路径；新增文件放对应目录，不把截图/日志散落到根目录。
 - 提交前：`rtk git diff --check`、读回改动文件、确认 `rtk git status --short` 无意外文件。
 - 提交信息说明「为什么」而不只是「改了什么」；除非用户要求，不自动 commit/push。

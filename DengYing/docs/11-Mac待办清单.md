@@ -1,4 +1,6 @@
 # 11. Mac 待办清单 —— P5-6 收敛版
+> **说明**：`DengYing/ohos-build` 与 `DengYing/harmony` 已移至 `DengYing/archive/`；本文件为历史记录，正文路径保留当时现场，未改写。
+
 
 **定位**：本清单是 P5 六类 28 项工单的**逐项终审结果**。P5-6 在 Windows 上把
 「凡 Windows 能实做或实跑的」全部做完，剩下的才是真正需要 macOS 的工作量。

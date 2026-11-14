@@ -98,11 +98,11 @@ kotlin {
         // 而本构建用 Kotlin 2.4.21（带 iOS 但没有 ohos）。两条版本线互斥，
         // 无法塞进同一个 Gradle 构建。
         //
-        // 所以 ohosMain 的编译与 IDE 索引由**独立构建** `ohos-build/` 负责：
-        //   Android Studio → File → Open → 选 `ohos-build/` 目录
+        // 所以 ohosMain 的编译与 IDE 索引由**独立工程** `DengYingOhos` 负责（旧 `ohos-build/` 已归档到 `archive/ohos-build/`）：
+        //   Android Studio → File → Open → 选 `DengYingOhos/` 目录
         //   （源码目录用 srcDir 指向 ../shared/src/{commonMain,ohosMain}，不复制文件）
         // 在那里 `compileKotlinOhosArm64` 实测 BUILD SUCCESSFUL，
-        // 且在仓根已实测 BUILD SUCCESSFUL（见 ohos-build/README.md）。
+        // 且在仓根已实测 BUILD SUCCESSFUL。
         //
         // 这里如果声明 `val ohosMain by creating` 但不挂 target，Gradle 只会报
         // 「Unused Kotlin Source Sets」警告，对索引毫无帮助（源集不在任何 compilation 里，
