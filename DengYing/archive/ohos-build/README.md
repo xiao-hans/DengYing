@@ -1,5 +1,9 @@
 # OHOS 独立索引/编译构建
 
+> **已归档，下述命令按归档前路径记录，现已失效**：本目录原为仓根 `ohos-build/`，
+> 已移至 `archive/`，不参与任何构建；`--project-dir ohos-build` 与脚本里的 `srcDir`
+> 相对路径在移动后均已不成立。现行鸿蒙构建见 `DengYingOhos`。本文件仅作追溯，请勿照做。
+
 本目录是一个**独立的 Gradle 构建**，唯一目的是让 Android Studio 能对
 `shared/src/ohosMain/` 里的 Kotlin 源码做正常的语义索引（Ctrl+点击跳转、
 重构、补全），并能真正编译出 ohos klib。
@@ -25,7 +29,7 @@
 
 ## 如何让 Android Studio 索引 ohosMain
 
-在 Android Studio 里 **File → Open** 选择 `ohos-build/` 这个目录（不是仓根），
+在 Android Studio 里 **File → Open** 选择 `ohos-build/` 这个目录（已失效：归档前路径）（不是仓根），
 等 Gradle Sync 完成。之后 `shared/src/ohosMain/**.ohos.kt` 里的
 `actual` 声明、`platform.CryptoArchitectureKit.*` 等符号都能 Ctrl+点击跳转，
 因为本构建把这些平台 klib 放进了 classpath。
@@ -37,6 +41,7 @@
 
 ```bash
 # 在仓根执行（复用主构建的 gradle wrapper）
+# 已失效：归档前命令，勿执行
 ./gradlew.bat --project-dir ohos-build :compileKotlinOhosArm64 --console=plain
 ```
 

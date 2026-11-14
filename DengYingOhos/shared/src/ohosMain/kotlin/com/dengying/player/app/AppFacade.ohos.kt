@@ -18,7 +18,9 @@ import com.dengying.player.domain.search.SearchSession
 import com.dengying.player.domain.search.TitleKey
 import com.dengying.player.platform.Clock
 import com.dengying.player.platform.FileKeyValueStore
+import com.dengying.player.platform.KeyValueStore
 import com.dengying.player.platform.Log
+import com.dengying.player.platform.MemoryKeyValueStore
 import com.dengying.player.platform.ioDispatcher
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
@@ -53,8 +55,24 @@ object OhosApp {
     internal val appScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     internal val started = AtomicInt(0)
 
-    lateinit var kv: FileKeyValueStore
-        private set
+    /**
+     * 已装配的 kv；[init] 之前或完全失败时为 null。
+     *
+     * 【为什么不再是 lateinit】`FileKeyValueStore(dataDir)` 构造失败时 lateinit 会保持
+     * 未初始化，后续 `AhAuth.init(OhosApp.kv)` 抛 `UninitializedPropertyAccessException`，
+     * 启动期直接崩溃。这里改成可空引用 + 安全访问，让「kv 没起来」退化为功能降级
+     * 而不是进程崩溃。
+     */
+    @Volatile
+    private var kvRef: KeyValueStore? = null
+
+    /** 安全访问：kv 未就绪时返回 null（不抛异常），供启动期装配使用 */
+    val kvOrNull: KeyValueStore? get() = kvRef
+
+    /** 严格访问：调用方确知 [init] 已完成后使用；未就绪给出明确错误而非 lateinit 异常 */
+    val kv: KeyValueStore
+        get() = kvRef ?: error("OhosApp.kv 未就绪：dengy_app_init 尚未执行")
+
     lateinit var store: Store
         private set
     lateinit var sources: SourceRepository
@@ -66,13 +84,21 @@ object OhosApp {
     fun init(dataDir: String): Int {
         if (started.load() != 0) return 1
         return try {
-            kv = FileKeyValueStore(dataDir)
-            store = Store(kv)
+            // kv 构造失败不阻断启动：退化为内存实现（重启即丢，但本次进程内可用）。
+            // 这样 UiDeps 侧的 AhAuth/ThemePrefs 初始化不会因 kv 未初始化而崩溃。
+            val kvStore: KeyValueStore = try {
+                FileKeyValueStore(dataDir)
+            } catch (e: Exception) {
+                Log.w("DY/App", "kv init failed, fallback to memory", e)
+                MemoryKeyValueStore()
+            }
+            kvRef = kvStore
+            store = Store(kvStore)
             // 两个BT 登录态与用户资产共用同一 kv（独立键，见 BttwoAuth）。
             // 对齐 Android DengYingApp.onCreate:99：必须先于首次组合与任何聚合。
-            BttwoAuth.init(kv)
+            BttwoAuth.init(kvStore)
             sources = SourceRepository()
-            pageCache = PageCache(kv)
+            pageCache = PageCache(kvStore)
             pageCache.pruneExpired()
             sources.classCacheReader = {
                 store.readClassCache().mapValues { (_, e) ->

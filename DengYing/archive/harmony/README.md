@@ -17,17 +17,31 @@ P6-1（2026-10-27）时它只是一具能编译的骨架；P6-4（2026-11-01）�
 | 产物 | `entry/build/default/outputs/default/entry-default-signed.hap` **8.1M**（含 `libs/x86_64/` 三个 `.so`） |
 | 模拟器 | DevEco Local Emulator `Pura 90 Pro Max`（API 23，**ABI x86_64**）；安装启动后页面显示四条 PASS |
 
-签名：`build-profile.json5` 指向 `C:/Users/HANXIAO/hmVideo-signing/dengying-release-java.p12`
-——必须是 legacy PBE 导出的 p12，openssl 3.x 默认 PBES2/AES 格式 hap-sign-tool 解析不了
-（`11014003 Init keystore failed`）。详见记忆 `harmony-emulator-build.md`。
+签名：仓库不再携带签名配置，`build-profile.json5` 的 `signingConfigs` 是空数组；
+本地需要时按下面「签名配置」一节自行恢复。p12 必须是 legacy PBE 导出的，
+openssl 3.x 默认 PBES2/AES 格式 hap-sign-tool 解析不了（`11014003 Init keystore failed`）。
+
+## 签名配置
+
+- **不入库**：签名材料（p12 / p7b / cer、storePassword / keyPassword、本机绝对路径）
+  一律不提交。仓库历史中曾出现这些内容，应视为**已泄漏**；请自行在
+  AppGallery Connect 轮换证书与口令，不要继续复用旧材料。
+- **推荐流程**：DevEco Studio → Project Structure → Signing Configs，本地自动生成
+  或导入自己的证书；生成结果只保留在本机 `build-profile.json5`，不要提交。
+- **手工恢复**：复制 `build-profile.local.json5.example` 为
+  `build-profile.local.json5`（已被 `.gitignore` 忽略），把 `<STORE_PASSWORD>` 等
+  占位符替换为真实值，再把 `signingConfigs` 和 `products[0].signingConfig: "default"`
+  合并回 `build-profile.json5`。真实 p12 / p7b / cer 放在本机任意目录，
+  路径只写进本地文件。
+- **未配置签名时**：hvigor 产出未签名 HAP，可编译、可装模拟器；真机发布与上架必须签名。
 
 ## shared 接入方式（推翻旧「不可用」结论）
 
 旧版 README 依据本仓 Kotlin 2.4.21 无 ohos target，判定「`:shared` 无法产出 ohos klib」。
 该结论已失效：**CPF（毕昇）Kotlin 2.2.21-1.1.0 支持 `ohos_arm64` 与 `ohos_x64`**，
-由仓根 `ohos-build/` 独立构建（版本线与主构建互斥，互不影响）：
+由同属 `archive/` 的 `ohos-build/` 独立构建（均已归档）（版本线与主构建互斥，互不影响）：
 
-1. `ohos-build` 里 `ohosX64()` 产出 sharedLib：`libdengying.so` + `libdengying_api.h`
+1. `archive/ohos-build` 里 `ohosX64()` 产出 sharedLib：`libdengying.so` + `libdengying_api.h`
    （`build/bin/ohosX64/debugShared/`）。模拟器是 x86_64 所以用 ohosX64；真机用 ohosArm64。
 2. `.so` 不导出任何 napi 注册入口，故壳侧 `entry/src/main/cpp/napi_init.cpp` 自写薄桥
    （现仅桥 `domain.search.TitleKey` 四个纯函数作链路验证）。
@@ -41,7 +55,8 @@ P6-1（2026-10-27）时它只是一具能编译的骨架；P6-4（2026-11-01）�
 ```
 harmony/
 ├── AppScope/app.json5                    bundleName = com.dengying.player
-├── build-profile.json5                   signingConfigs 已配（见上）
+├── build-profile.json5                   signingConfigs 为空（见「签名配置」）
+├── build-profile.local.json5.example     本地签名模板（只有占位符，不含真实值）
 ├── entry/
 │   ├── build-profile.json5               externalNativeOptions → src/main/cpp/CMakeLists.txt
 │   ├── libs/x86_64/                      libdengying.so + libc++_shared.so（手工放置）

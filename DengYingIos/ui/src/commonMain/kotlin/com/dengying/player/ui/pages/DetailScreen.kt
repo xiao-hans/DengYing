@@ -36,10 +36,12 @@ import com.dengying.player.core.VideoItem
 import com.dengying.player.player.PlaybackProbe
 import com.dengying.player.ui.components.DyIcon
 import com.dengying.player.ui.components.DyIcons
+import com.dengying.player.ui.components.GlassBackButton
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.InlineNotice
 import com.dengying.player.ui.components.InlinePlayer
 import com.dengying.player.ui.components.Poster
+import com.dengying.player.ui.components.glassPageBackdrop
 import com.dengying.player.ui.platform.ConsumePortraitOrientation
 import com.dengying.player.ui.theme.Palette
 import com.dengying.player.ui.viewmodel.AltItem
@@ -141,10 +143,15 @@ fun DetailScreen(
         }
     }
 
+    // 【这里不用 GlassPage】详情页内容区含内嵌播放位（SurfaceView/TextureView）。
+    // 把视频面录进 GraphicsLayer 会采不到画面（SurfaceView 不参与图层合成），
+    // 实测风险大于收益，故本页只保留柔光底：顶栏玻璃透出的是页面柔光，
+    // 不采样内容。首页/列表页无视频面，才用 GlassPage 做真实内容透射。
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Palette.AppBg),
+            // 【透射源】纯色底换成柔光渐变层——玻璃件才有真实内容可透（见 GlassPageBackdrop）
+            .glassPageBackdrop(),
     ) {
         // ---- 返回栏 ----
         // 【玻璃化 2026-11-08】原为品牌色实底延伸进状态栏；改版后顶栏融入
@@ -159,15 +166,7 @@ fun DetailScreen(
         ) {
             // 【原为全角 "‹" 字形】它属于字体里的符号字符，粗细随字重漂移、
             // 左右留白也占宽度（"全角字符 + padding" 容易把标题挤偏）。改矢量箭头。
-            DyIcon(
-                icon = DyIcons.ArrowBack,
-                tint = Palette.TextPrimary,
-                contentDescription = "返回",
-                size = 26.dp,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(end = 10.dp),
-            )
+            GlassBackButton(onClick = onBack, modifier = Modifier.padding(end = 10.dp))
             Text(
                 text = s.item?.vod_name ?: name,
                 style = MaterialTheme.typography.titleSmall,
@@ -199,7 +198,7 @@ fun DetailScreen(
             }
         }
 
-        when {
+            when {
             // 【加载速度：有内容就先画内容】`s.loading` 曾经是第一分支，
             // 于是即便详情已经到手，只要那次本地 IO（收藏态/历史态）没回来，
             // 整页就还是一个转圈——数据在手却不让看。
@@ -236,8 +235,12 @@ fun DetailScreen(
                     //  - `!pageActive`：本页已不是栈顶（返回、切全屏、跳其它页）
                     // 后者在导航动作发生时立即成立，不依赖转场与生命周期时序。
                     hidden = vm.inlineState.hidden || !pageActive,
+                    canPrev = vm.inlineHasEp(-1),
+                    canNext = vm.inlineHasEp(1),
                     onTogglePlay = { vm.toggleInlinePlay() },
                     onSeek = { pos -> vm.seekInline(pos) },
+                    onPrev = { vm.inlineSwitchEpisode(-1) },
+                    onNext = { vm.inlineSwitchEpisode(1) },
                     onEnterFullscreen = { vm.toFullscreen() },
                     modifier = Modifier.background(Color.Black),
                 )
@@ -258,6 +261,7 @@ fun DetailScreen(
                         displayEps = vm.displayEps(),
                         realIndexOf = { vm.epRealIndex(it) },
                         isResumeEp = { vm.isResumeEp(it) },
+                        playingEp = s.playingEp,
                         // FR-705：点剧集**就地播放**（内嵌），不再跳页。
                         // 跳全屏播放页的入口改为内嵌位的全屏键（见上）。
                         onPlayEpisode = { vm.playInline(it) },
@@ -515,6 +519,8 @@ private fun EpisodeBlock(
     displayEps: List<Episode>,
     realIndexOf: (Int) -> Int,
     isResumeEp: (Int) -> Boolean,
+    /** 会话正在播的真实集序号（-1 = 无）。优先于历史续播点显示选中态。 */
+    playingEp: Int,
     onPlayEpisode: (Int) -> Unit,
 ) {
     GlassSurface(
@@ -637,7 +643,11 @@ private fun EpisodeBlock(
                             }
                             val ep = displayEps[displayIdx]
                             val real = realIndexOf(displayIdx)
-                            val resume = isResumeEp(real)
+                            // 【选中态】当前在播 > 历史续播点。此前只看续播点，
+                            // 点集后网格毫无反馈（用户反馈"选中剧集没有选中UI显示"）。
+                            val current = playingEp == real
+                            val resume = !current && isResumeEp(real)
+                            val selected = current || resume
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -645,7 +655,7 @@ private fun EpisodeBlock(
                                     // 更大的热区，同时也是对"点击没反应"的一次结构性改善
                                     .height(48.dp)
                                     .background(
-                                        if (resume) Palette.Brand else Palette.SearchBg,
+                                        if (selected) Palette.Brand else Palette.SearchBg,
                                         RoundedCornerShape(6.dp),
                                     )
                                     .clickable {
@@ -660,12 +670,12 @@ private fun EpisodeBlock(
                                 Text(
                                     text = ep.name,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (resume) Color.White else Palette.TextPrimary,
+                                    color = if (selected) Color.White else Palette.TextPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                // 「续」角标：上次看到的一集
-                                if (resume) {
+                                // 角标：当前在播「播」；否则历史续播点「续」
+                                if (selected) {
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopEnd)
@@ -675,7 +685,7 @@ private fun EpisodeBlock(
                                             ),
                                     ) {
                                         Text(
-                                            text = "续",
+                                            text = if (current) "播" else "续",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = Color.White,
                                             modifier = Modifier.padding(horizontal = 3.dp),

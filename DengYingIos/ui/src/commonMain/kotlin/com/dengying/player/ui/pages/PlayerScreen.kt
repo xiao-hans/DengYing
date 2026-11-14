@@ -42,6 +42,7 @@ import com.dengying.player.domain.playback.HlsVariants
 import com.dengying.player.player.PlaybackProbe
 import com.dengying.player.ui.components.DyIcon
 import com.dengying.player.ui.components.DyIcons
+import com.dengying.player.ui.components.GlassBackButton
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.SeekPreviewBubble
 import com.dengying.player.ui.platform.PlatformBackHandler
@@ -381,6 +382,21 @@ fun PlayerScreen(
             }
         }
 
+        // ---- 一次性轻提示（如换档失败已回退）----
+        // 与 errMsg 的常驻错误浮层分开：这种提示可自愈，不应遮挡控制层或要求重试。
+        if (s.noticeMsg.isNotEmpty() && s.errMsg.isEmpty()) {
+            Text(
+                text = s.noticeMsg,
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 24.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+            )
+        }
+
         // ---- 手势调节浮层（P-04 亮度靠左 / P-05 音量靠右）----
         //
         // 【为什么放在这里而不是 ControlOverlay 里】控制层会随 4 秒自动隐藏，
@@ -538,15 +554,7 @@ private fun ControlOverlay(
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DyIcon(
-                icon = DyIcons.ArrowBack,
-                tint = Color.White,
-                contentDescription = "返回",
-                size = 22.dp,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(end = 10.dp),
-            )
+            GlassBackButton(onClick = onBack, dark = true, modifier = Modifier.padding(end = 10.dp))
             Text(
                 text = s.title,
                 style = MaterialTheme.typography.bodyMedium,
