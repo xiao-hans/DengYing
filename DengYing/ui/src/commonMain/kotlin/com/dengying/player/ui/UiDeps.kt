@@ -5,6 +5,7 @@ import com.dengying.player.data.cache.PageCache
 import com.dengying.player.data.source.SourceRepository
 import com.dengying.player.data.store.Store
 import com.dengying.player.player.PlayerEngineHost
+import com.dengying.player.playback.cast.CastController
 import com.dengying.player.ui.viewmodel.AltItem
 import com.dengying.player.ui.viewmodel.LruCache
 
@@ -50,6 +51,16 @@ interface UiDeps {
 
     /** 播放引擎宿主（全局唯一引擎的计数与生命周期） */
     val engineHost: PlayerEngineHost
+
+    /**
+     * 投屏通道（FR-418..423）。
+     *
+     * 与 [engineHost] 同一装配模式：`:ui` 只声明需要「能发现设备 / 下发媒体 /
+     * 断开回落」的窄口子，Android 壳注入基于 GMS Cast 框架的实现，
+     * 其余平台注入 `NoopCastController`。`:ui/commonMain` 因此不认识
+     * Android 上下文类型，也不认识 Cast SDK 的任何类。
+     */
+    val castController: CastController
 
     /**
      * 当前是否为 debug 构建（KMP P4-4b）。

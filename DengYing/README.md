@@ -64,6 +64,7 @@ app/src/main/java/com/dengying/player/
 │   ├── SourceOverrideRules     源启用覆盖层（FR-601）
 │   ├── CastUtil                可投性与投屏失败分流（FR-419/423）
 │   └── ConfirmSpec / SearchNotice / TouchTarget / LogTags
+├── playback/cast/  CastController 契约 + CastDevice/CastMedia/CastEvent（实现在 :app）
 ├── data/
 │   ├── net/         HttpClient（唯一出网口，经闸门）、HlsUtil（解析与探测）
 │   ├── source/      源清单、聚合客户端、8 个协议适配器、签名常量
@@ -98,8 +99,11 @@ ui ──> playback ──> domain
 
 ## 已知边界
 
-- **投屏**只到"可投性判定 + 入口禁用态"：`CastUtil` 的纯逻辑已完成并有测试，
-  平台侧（DLNA/Cast 通道）未接入。
+- **投屏**已接通 Google Cast 通道：`CastUtil` 负责可投性与失败分流，`DengYingCastOptionsProvider`
+  + `GmsCastController` 负责设备发现 / 会话 / 下发 / 断开回落，播放页「投屏」按钮接真实流程。
+  接入 GMS 意味着设备发现与会话由 Google Play 服务承担、媒体地址交给局域网接收端，
+  口径与体积评估见 [docs/01 §1.1](docs/01-移植说明.md)。**真机投屏尚未验证**（本环境无设备、
+  无 Cast 接收端），编译与 JVM 单测已通过，见 [docs/04 §16.61](docs/04-验证记录.md)。
 - **源清单**为编译期常量，改源需发版。
 - **AH（两个BT）登录**成功分支未真机实测（无测试账号）：协议经探针复算 +
   模拟器错误分支（服务端「用户名或密码错误」）验证；鸿蒙端因 JS 桥无响应头，
