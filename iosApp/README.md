@@ -12,7 +12,7 @@ ATS 例外、版本号、脚本相位顺序，全部按 KGP 源码实证改到�
 | `DengYing.xcodeproj/project.pbxproj` | 单 target `DengYing`。构建相位顺序 `Compile Kotlin Framework → Sources → Frameworks → Resources`；`FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/../ui/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"`；`OTHER_LDFLAGS = ("$(inherited)", "-framework", DengYing)`；`ENABLE_USER_SCRIPT_SANDBOXING = NO` |
 | `DengYing.xcodeproj/xcshareddata/xcschemes/DengYing.xcscheme` | 共享 scheme（`BlueprintIdentifier = 1A000501`），`xcodebuild -scheme DengYing` 直接可用，不依赖 Xcode 自动生成 |
 | `DengYingApp.swift` | SwiftUI 入口。`UIViewControllerRepresentable` 包 `MainViewControllerKt.MainViewController()`，外层 `OrientationHostingController` 回答 `supportedInterfaceOrientations` / `prefersStatusBarHidden` |
-| `Info.plist` | bundle 标识、版本（与 Android 同步：`1.1.0` / `1000100`）、方向、启动屏、`NSAppTransportSecurity` 例外（见下） |
+| `Info.plist` | bundle 标识、版本（与 Android / 鸿蒙同步：`1.3.29` / `1000329`）、方向、启动屏、`CADisableMinimumFrameDurationOnPhone = true`、`NSAppTransportSecurity` 例外（见下） |
 | `build-phase.sh` | 构建相位脚本，末行 `exec ./gradlew :ui:embedAndSignAppleFrameworkForXcode` |
 
 ## 三条接线为什么是这样（读 KGP 源码得出，不是猜的）
@@ -30,6 +30,10 @@ ATS 例外、版本号、脚本相位顺序，全部按 KGP 源码实证改到�
    ⇒ `ENABLE_USER_SCRIPT_SANDBOXING = NO` 是硬要求。
 4. 脚本相位必须排在 Sources **之前**，且带 `alwaysOutOfDate = 1`（否则 Xcode
    认为无输入无输出，直接跳过）。
+
+## `Info.plist` 的帧率键
+
+顶层 `CADisableMinimumFrameDurationOnPhone` 为 true。Compose Multiplatform 在 `ComposeUIViewController` 加载后读主包 Info.plist；该键不是 true 时，`androidx.compose.ui.uikit.PlistSanityCheck.performIfNeeded` 以 `error` 终止，进程 `abort`。检查不区分 iPhone / iPad。`MainViewController()` 使用 `ComposeUIViewController` 的默认配置。Debug 与 Release 都读这份 `INFOPLIST_FILE`。
 
 ## `Info.plist` 的 ATS 例外
 
