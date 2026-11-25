@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -82,24 +83,36 @@ internal fun HomeFeedView(
     bottomPadding: Dp,
     state: LazyListState,
     onOpen: (VideoItem) -> Unit,
+    // 大屏每行热点数（手机 2、中屏 3、平板 4）；默认值等于改前行为。
+    columns: Int = 2,
+    // 超宽屏居中留白：1280dp 以外不在一条长线上排卡。
+    sidePadding: Dp = 0.dp,
 ) {
     val layout = buildHomeFeedLayout(sections)
     LazyColumn(
         state = state,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
+        contentPadding = PaddingValues(start = sidePadding, end = sidePadding, top = topPadding, bottom = bottomPadding),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         if (layout.hero.isNotEmpty()) {
             item(key = "hero") {
-                HeroCarousel(items = layout.hero, onOpen = onOpen)
+                // 超宽屏把 Hero 夹到 900dp 并居中：1280dp 全宽会让 16:9 的 Banner
+                // 高到 720dp，一屏只剩一张图。手机宽度不足 900dp，不受影响。
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    HeroCarousel(
+                        items = layout.hero,
+                        onOpen = onOpen,
+                        modifier = Modifier.widthIn(max = 900.dp).fillMaxWidth(),
+                    )
+                }
             }
         }
         if (layout.grid.isNotEmpty()) {
             item(key = "hot-header") {
                 SectionHeader(title = HOME_HOT_TITLE, count = layout.hero.size + layout.grid.size)
             }
-            items(layout.grid.chunked(2), key = { row -> "hot-${row.first().vod_id}" }) { row ->
+            items(layout.grid.chunked(columns.coerceAtLeast(1)), key = { row -> "hot-${row.first().vod_id}" }) { row ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -139,7 +152,11 @@ internal fun HomeFeedView(
 }
 
 @Composable
-private fun HeroCarousel(items: List<VideoItem>, onOpen: (VideoItem) -> Unit) {
+private fun HeroCarousel(
+    items: List<VideoItem>,
+    onOpen: (VideoItem) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val pager = rememberPagerState { items.size }
     LaunchedEffect(items.size) {
         if (items.size <= 1) return@LaunchedEffect
@@ -148,7 +165,7 @@ private fun HeroCarousel(items: List<VideoItem>, onOpen: (VideoItem) -> Unit) {
             pager.animateScrollToPage((pager.currentPage + 1) % items.size)
         }
     }
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = modifier.fillMaxWidth()) {
         HorizontalPager(
             state = pager,
             contentPadding = PaddingValues(0.dp),

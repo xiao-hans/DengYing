@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -72,6 +73,8 @@ import com.dengying.player.ui.platform.PlatformBackHandler
 import com.dengying.player.ui.platform.rememberFullscreenState
 import com.dengying.player.ui.theme.Palette
 import com.dengying.player.ui.viewmodel.AltItem
+import com.dengying.player.ui.layout.AdaptiveSpec
+import com.dengying.player.ui.layout.LocalAdaptiveSpec
 import com.dengying.player.ui.viewmodel.DetailViewModel
 import com.dengying.player.data.download.DownloadCenter
 
@@ -304,7 +307,18 @@ fun DetailScreen(
             // 【加载速度：有内容就先画内容】`s.loading` 曾经是第一分支，
             // 于是即便详情已经到手，只要那次本地 IO（收藏态/历史态）没回来，
             // 整页就还是一个转圈——数据在手却不让看。
-            s.item != null -> Column(modifier = Modifier.fillMaxSize()) {
+            s.item != null -> {
+            // 【大屏双栏】左栏播放器 + 信息，右栏线路与剧集。
+            // 播放器**始终是左栏第一个子项**，跨断点只有一个调用点：方向/窗口
+            // 变化只改 weight 与右栏是否出现，不会重建 InlinePlayer，会话与进度
+            // 都留在 ViewModel 里（FR-711 的同一原则）。
+            val largeDetail = LocalAdaptiveSpec.current.isLargeScreen
+            Row(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .weight(if (largeDetail) 0.56f else 1f)
+                    .fillMaxHeight(),
+            ) {
                 // ---- 内嵌播放位（FR-705）----
                 //
                 // 位置：**内容上方**（顶栏之下、影片信息之上）——用户明确要求
@@ -418,39 +432,33 @@ fun DetailScreen(
                         .verticalScroll(rememberScrollState()),
                 ) {
                     InfoBlock(s.item!!)
-                    if (s.altLoading || s.altSources.isNotEmpty()) {
-                        AltSourceBlock(
-                            alts = s.altSources,
-                            loading = s.altLoading,
-                            currentSourceKey = s.sourceKey,
-                            switchingTo = s.switchingTo,
-                            onSwitch = { vm.switchToSource(it) },
-                        )
+                    // 手机/窄屏：线路、剧集仍在本列下方（原单列形态）。
+                    // 大屏把它们交给右栏，左栏只留信息，避免播放器把剧集挤出屏幕。
+                    if (!largeDetail) {
+                        DetailSecondaryBlock(vm = vm, s = s, columns = 4, cellHeight = 48.dp)
                     }
-                    EpisodeBlock(
-                        s = s,
-                        onSelectLine = { vm.selectLine(it) },
-                        onToggleOrder = { vm.toggleOrder() },
-                        displayEps = vm.displayEps(),
-                        realIndexOf = { vm.epRealIndex(it) },
-                        isResumeEp = { vm.isResumeEp(it) },
-                        playingEp = s.playingEp,
-                        // FR-705：点剧集**就地播放**（内嵌），不再跳页。
-                        // 跳全屏播放页的入口改为内嵌位的全屏键（见上）。
-                        onPlayEpisode = { vm.playInline(it) },
-                        downloadOf = { s.downloads[it] },
-                        onDownloadEpisode = { vm.downloadEpisode(it) },
-                    )
-
-                    // 底部留白：让最底部的剧集按钮脱离屏幕边缘与系统手势区。
-                    //
-                    // 【为什么用固定高度而不是 navigationBarsPadding】
-                    // 真机实测：加 `navigationBarsPadding()` 后，剧集按钮的可点区域
-                    // 出现异常（点击被上方的线路 chip 抢走）——insets 计算改变了
-                    // 滚动容器的测量结果，而滚动中的触摸目标随之偏移。
-                    // 固定高度的 Spacer 不参与 insets 协商，效果确定、可预期。
-                    Spacer(Modifier.height(96.dp))
                 }
+            }
+            if (largeDetail) {
+                Column(
+                    modifier = Modifier
+                        .weight(0.44f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    // 右栏按栏宽算列数：1280dp 下约 5 列（每格 ≈105dp），
+                    // 1920dp 封顶 8 列。手机不走这里，仍是原 4 列。
+                    DetailSecondaryBlock(
+                        vm = vm,
+                        s = s,
+                        columns = AdaptiveSpec.episodeColumns(
+                            LocalAdaptiveSpec.current.widthDp * 0.44f,
+                        ),
+                        cellHeight = 52.dp,
+                    )
+                }
+            }
+            }
             }
 
             // 冷启首帧：路由里已经带了片名和封面（Routes.detail 的 name/pic 参数），
@@ -545,19 +553,23 @@ private fun InfoBlock(item: VideoItem) {
             .fillMaxWidth()
             .padding(14.dp),
     ) {
+        // 大屏观看距离更远：海报从 110×150 提到 132×180，文字列同步加高。
+        val large = LocalAdaptiveSpec.current.isLargeScreen
+        val posterWidth = if (large) 132.dp else 110.dp
+        val posterHeight = if (large) 180.dp else 150.dp
         Row {
             Poster(
                 url = item.vod_pic,
                 title = item.vod_name,
                 modifier = Modifier
-                    .width(110.dp)
-                    .height(150.dp),
+                    .width(posterWidth)
+                    .height(posterHeight),
                 cornerRadius = 8,
             )
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .height(150.dp)
+                    .height(posterHeight)
                     .padding(start = 12.dp),
             ) {
                 Text(
@@ -792,6 +804,52 @@ private fun AllSourcesDialog(
     )
 }
 
+/**
+ * 详情页「线路 + 剧集」段：窄屏跟在 [InfoBlock] 之后，大屏整体搬到右栏。
+ * 两处共用同一实现，避免列数、点击回调、底部留白各写一套后漂移。
+ */
+@Composable
+private fun DetailSecondaryBlock(
+    vm: DetailViewModel,
+    s: DetailViewModel.UiState,
+    columns: Int,
+    cellHeight: Dp,
+) {
+    if (s.altLoading || s.altSources.isNotEmpty()) {
+        AltSourceBlock(
+            alts = s.altSources,
+            loading = s.altLoading,
+            currentSourceKey = s.sourceKey,
+            switchingTo = s.switchingTo,
+            onSwitch = { vm.switchToSource(it) },
+        )
+    }
+    EpisodeBlock(
+        s = s,
+        onSelectLine = { vm.selectLine(it) },
+        onToggleOrder = { vm.toggleOrder() },
+        displayEps = vm.displayEps(),
+        realIndexOf = { vm.epRealIndex(it) },
+        isResumeEp = { vm.isResumeEp(it) },
+        playingEp = s.playingEp,
+        // FR-705：点剧集**就地播放**（内嵌），不再跳页。
+        // 跳全屏播放页的入口改为内嵌位的全屏键。
+        onPlayEpisode = { vm.playInline(it) },
+        downloadOf = { s.downloads[it] },
+        onDownloadEpisode = { vm.downloadEpisode(it) },
+        columns = columns,
+        cellHeight = cellHeight,
+    )
+    // 底部留白：让最底部的剧集按钮脱离屏幕边缘与系统手势区。
+    //
+    // 【为什么用固定高度而不是 navigationBarsPadding】
+    // 真机实测：加 `navigationBarsPadding()` 后，剧集按钮的可点区域
+    // 出现异常（点击被上方的线路 chip 抢走）——insets 计算改变了
+    // 滚动容器的测量结果，而滚动中的触摸目标随之偏移。
+    // 固定高度的 Spacer 不参与 insets 协商，效果确定、可预期。
+    Spacer(Modifier.height(96.dp))
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EpisodeBlock(
@@ -806,6 +864,10 @@ private fun EpisodeBlock(
     onPlayEpisode: (Int) -> Unit,
     downloadOf: (Int) -> DownloadCenter.Item?,
     onDownloadEpisode: (Int) -> Unit,
+    /** 每行列数：手机 4，大屏按右栏宽度 5-8。 */
+    columns: Int = 4,
+    /** 剧集格高度：大屏放大到 52dp，仍是 ≥48dp 的触控目标。 */
+    cellHeight: Dp = 48.dp,
 ) {
     // 下载模式：先点「下载」进入，再点任一剧集即离线保存。
     // 原先只有长按隐藏手势，用户不知道能下载；长按仍保留作为快捷方式。
@@ -955,7 +1017,7 @@ private fun EpisodeBlock(
             //
             // 改法：手动按 4 列分行，用普通 Row/Box。选集数量有限（实测该源 1 集，
             // 长剧最多几百集），且外层已经是 Scroll，嵌套 Lazy 本来就没有收益。
-            val perRow = 4
+            val perRow = columns.coerceAtLeast(1)
             val rows = (displayEps.size + perRow - 1) / perRow
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -986,7 +1048,7 @@ private fun EpisodeBlock(
                                     .weight(1f)
                                     // 【FR-709 + 点击失效诊断】高度从 38dp 提到 48dp：
                                     // 更大的热区，同时也是对"点击没反应"的一次结构性改善
-                                    .height(48.dp)
+                                    .height(cellHeight)
                                     .background(
                                         if (selected) Palette.Brand else Palette.SearchBg,
                                         RoundedCornerShape(6.dp),

@@ -79,6 +79,7 @@ fun MineScreen(
     onOpenLogin: () -> Unit,
     topPadding: Dp,
     bottomPadding: Dp,
+    modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
     val deps = remember { UiDepsHolder.get() }
@@ -134,8 +135,9 @@ fun MineScreen(
         onDispose { backStackEntry?.lifecycle?.removeObserver(observer) }
     }
 
+    // 大屏上内容夹到 720dp 居中（外层 Box 负责限宽与定位），手机保持满宽。
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(top = topPadding, bottom = bottomPadding),

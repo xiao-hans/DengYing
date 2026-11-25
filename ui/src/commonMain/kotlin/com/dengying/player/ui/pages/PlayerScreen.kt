@@ -43,6 +43,7 @@ import com.dengying.player.domain.playback.HlsVariants
 import com.dengying.player.player.PlaybackProbe
 import com.dengying.player.ui.components.DyIcon
 import com.dengying.player.ui.components.DyIcons
+import com.dengying.player.ui.layout.LocalAdaptiveSpec
 import com.dengying.player.ui.components.GlassBackButton
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.SeekPreviewBubble
@@ -1020,7 +1021,15 @@ private fun CtrlIcon(
 ) {
     // 【变量名不能叫 size】它会遮蔽 `Modifier.size()` 扩展函数，
     // 导致 `Modifier.size(size)` 解析失败（真机编译时踩到）。
-    val buttonSize = if (primary) 46.dp else 40.dp
+    // 大屏只放大尺寸：主键 56dp、次键 48dp，满足 48dp 触控下限；
+    // 顺序、语义、布局都不变（FR-707 单行、FR-711 会话零中断）。
+    val large = LocalAdaptiveSpec.current.isLargeScreen
+    val buttonSize = when {
+        large && primary -> 56.dp
+        large -> 48.dp
+        primary -> 46.dp
+        else -> 40.dp
+    }
     Box(
         modifier = Modifier
             .size(buttonSize)
@@ -1042,7 +1051,12 @@ private fun CtrlIcon(
             icon != null -> DyIcon(
                 icon = icon,
                 tint = tint,
-                size = if (primary) 28.dp else 22.dp,
+                size = when {
+                    large && primary -> 30.dp
+                    large -> 24.dp
+                    primary -> 28.dp
+                    else -> 22.dp
+                },
                 contentDescription = label.ifEmpty { null },
             )
         }

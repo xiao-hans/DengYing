@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -65,8 +66,11 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.dengying.player.ui.layout.AdaptiveSpec
+import com.dengying.player.ui.layout.LocalAdaptiveSpec
 import com.dengying.player.ui.UiDepsHolder
 import com.dengying.player.core.CmsSources
 import com.dengying.player.data.net.HlsUtil
@@ -91,6 +95,7 @@ import com.dengying.player.ui.components.GlassChip
 import com.dengying.player.ui.components.HomeFeedSkeleton
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.Poster
+import com.dengying.player.ui.components.SideRail
 import com.dengying.player.ui.components.SkeletonGrid
 import com.dengying.player.ui.components.rememberSkeletonColor
 import com.dengying.player.ui.components.GlassPage
@@ -162,6 +167,27 @@ fun IndexScreen(
     },
 ) {
     val s = vm.state
+    // 【大屏】断点由 NavGraph 根部读一次后下发，这里只消费。手机档所有值都是
+    // 改前常量（3 列 / 海报 140dp / 12dp 边距 / 88dp rail = 0），布局不变。
+    val spec = LocalAdaptiveSpec.current
+    val railDp = spec.railWidthDp.dp
+    val sideDp = (12f + spec.contentSideDp).dp
+    // 发现页是 16:9 大图流，不能按 900dp 上限：960dp 平板竖屏下仍有 872dp，
+    // 一张卡会高到 490dp，一屏只看得见一张半。这里单独夹到 720dp。
+    val discoverSideDp = (
+        AdaptiveSpec.extraSide(
+            (spec.widthDp - spec.railWidthDp).coerceAtLeast(0f),
+            DISCOVER_MAX_WIDTH_DP,
+        ) + 12f
+        ).dp
+    val feedSideDp = spec.feedSideDp.dp
+    val chipHeightDp = spec.minTouchDp.dp
+    // 卡片宽度按真实网格宽度算一次，避免每张卡各自 subcompose 量一遍。
+    val gridCardWidthDp = (
+        ((spec.widthDp - spec.railWidthDp).coerceAtMost(AdaptiveSpec.MAX_CONTENT_DP) - 24f) -
+            (spec.gridColumns - 1) * 10f
+        ) / spec.gridColumns
+    val posterDp = AdaptiveSpec.posterHeight(gridCardWidthDp).dp
     // ---- v5 四窗格导航（首页/分类/发现/我的）----
     // 导航事实源是 pagerState 本身：Dock 选中项直接读 pagerState.targetPage
     // （拖动中高光即跟随），点 Dock 只 animateScrollToPage——不再有独立 dockTab。
@@ -235,7 +261,17 @@ fun IndexScreen(
     }
     // 底部悬浮 Dock 的内容避让：Dock 本体高 60 + 悬浮边距 16 + 安全区。
     // 分类网格/版块流的 contentPadding.bottom 用它——最后一张卡要能滚出 Dock 顶。
-    val bottomReserve = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 76.dp
+    // 大屏改侧栏后底部不再有 Dock，只需让最后一项能被安全区挡住时仍可见；
+    // 这里复用 BottomDock 的 56dp 钳制（ohos compose-arkui 会报异常大的 nav inset），
+    // 不用未钳制的 navigationBars 高度。
+    val bottomReserve = if (spec.showsRail) {
+        val density = LocalDensity.current
+        with(density) {
+            WindowInsets.navigationBars.getBottom(density).toDp()
+        }.coerceAtMost(56.dp) + 16.dp
+    } else {
+        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 76.dp
+    }
 
     // 【发现页混合片池 v5.6】主体 = 六个分类的聚合条目（采集站多源混合，直链几乎
     // 必播，失败率低）；辅料 = tv189 版块运营精选（封面/画质好，但 VIP 独播多、
@@ -292,7 +328,10 @@ fun IndexScreen(
         // ---- 内容层（铺满全屏，从玻璃件背后穿过） ----
         androidx.compose.foundation.pager.HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize(),
+            // 大屏给侧栏让位；手机 railDp = 0，尺寸与改前一致。
+            // 用 padding 而不是包一层 Row/if 分支：pager 只有这一个调用点，
+            // 换断点不会重建页内 remember（Hero 轮播、发现页视频位置都靠它）。
+            modifier = Modifier.fillMaxSize().padding(start = railDp),
             // 预组合相邻各一页：滑到一半就能看见下一页内容。
             // 取 1 而不是更大的值——每多预组合一页就多一整屏封面要解码。
             beyondViewportPageCount = 1,
@@ -339,6 +378,8 @@ fun IndexScreen(
                             onOpenDetail = onOpenDetail,
                             onRetry = { vm.loadData(0) },
                             state = listState,
+                            columns = spec.feedColumns,
+                            sidePadding = feedSideDp,
                         )
                     }
                 }
@@ -367,6 +408,14 @@ fun IndexScreen(
                     chipsVisible = chromeVisible,
                     // v5.7.2：网格滚动方向也驱动整组 chrome 显隐
                     onScrollDir = { down -> chromeVisible = !down },
+                    columns = spec.gridColumns,
+                    posterHeight = posterDp,
+                    sidePadding = sideDp,
+                    chipHeight = chipHeightDp,
+                    chipsSidePadding = (maxOf(
+                        12f + spec.contentSideDp,
+                        (spec.widthDp - spec.railWidthDp - 840f) / 2f,
+                    )).coerceAtLeast(12f).dp,
                 )
                 // ---- 发现：随机推荐 + 内嵌自动播放（v5，抖音式单播） ----
                 2 -> DiscoverPane(
@@ -375,6 +424,7 @@ fun IndexScreen(
                     uiState = discoverUi,
                     topPadding = topPad,
                     bottomPadding = bottomReserve,
+                    sidePadding = discoverSideDp,
                     onOpenDetail = onOpenDetail,
                     onShuffle = { discoSeed++ },
                     // targetPage 在滑动开始即变 → 开始滑就停声（主流口径）
@@ -398,17 +448,21 @@ fun IndexScreen(
                     },
                 )
                 // ---- 我的：个人信息聚合（v5；共享顶栏在本页隐藏，自带页头） ----
-                3 -> MineScreen(
-                    onOpenFavorites = onOpenFavorites,
-                    onOpenHistory = onOpenHistory,
-                    onOpenDownloads = onOpenDownloads,
-                    onOpenSettings = onOpenSettings,
-                    onOpenSourceStatus = onOpenSourceStatus,
-                    onOpenLiveChannels = onOpenLiveChannels,
-                    onOpenLogin = onOpenLogin,
-                    topPadding = topPad,
-                    bottomPadding = bottomReserve,
-                )
+                3 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    MineScreen(
+                        onOpenFavorites = onOpenFavorites,
+                        onOpenHistory = onOpenHistory,
+                        onOpenDownloads = onOpenDownloads,
+                        onOpenSettings = onOpenSettings,
+                        onOpenSourceStatus = onOpenSourceStatus,
+                        onOpenLiveChannels = onOpenLiveChannels,
+                        onOpenLogin = onOpenLogin,
+                        topPadding = topPad,
+                        bottomPadding = bottomReserve,
+                        // 1280dp 宽的通栏信息卡读起来要横着扫视；夹到 720dp 居中。
+                        modifier = Modifier.widthIn(max = 720.dp).fillMaxHeight(),
+                    )
+                }
             }
         }
         },
@@ -433,7 +487,8 @@ fun IndexScreen(
                 // 首页品牌条是普通页面（非全屏播放），仍要避让状态栏；
                 // 全屏播放的贴边口径见 InlinePlayer 的 6dp 规则。
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                // 大屏：给 rail 让位，并把整行夹在 1280dp 内容宽度内；手机两项都是 0/12dp。
+                .padding(start = sideDp + railDp, end = sideDp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // 玻璃品牌条（44dp 胶囊）。
@@ -469,6 +524,8 @@ fun IndexScreen(
             GlassSurface(
                 modifier = Modifier
                     .weight(1f)
+                    // 超宽屏不让搜索框拉成 1100dp 的长条；手机宽度本来就不足 560dp。
+                    .widthIn(max = 560.dp)
                     .height(44.dp),
                 shape = RoundedCornerShape(22.dp),
             ) {
@@ -502,6 +559,9 @@ fun IndexScreen(
         // v5：选中项绑定 pagerState.targetPage —— 拖动翻页时高光跟着走
         //（spring 动画在 BottomDock 内部平滑追踪），点 Dock 只负责滚动。
         // v5.7：Dock 跟随滚动隐藏/呼出（与顶栏同一 chromeVisible）。
+        // 大屏改用左侧 rail（见 SideRail），底部 Dock 整个不画：
+        // 把 56dp 胶囊拉满 1600dp 会把四个入口摊成横幅，比手机更难按。
+        if (!spec.showsRail) {
         androidx.compose.animation.AnimatedVisibility(
             visible = chromeVisible,
             // 【只淡入淡出，不做纵向滑动】(DVP §8) Dock 是最明显的受害者：玻璃折射
@@ -512,12 +572,7 @@ fun IndexScreen(
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
         BottomDock(
-            items = listOf(
-                DockSpec(key = "home", label = "首页", icon = DyIcons.Lantern),
-                DockSpec(key = "category", label = "分类", icon = DyIcons.Grid),
-                DockSpec(key = "discover", label = "发现", icon = DyIcons.Compass),
-                DockSpec(key = "mine", label = "我的", icon = DyIcons.Person),
-            ),
+            items = DOCK_ITEMS,
             selectedKey = DOCK_KEYS[pagerState.targetPage],
             onSelect = { item ->
                 scope.launch {
@@ -525,6 +580,21 @@ fun IndexScreen(
                 }
             },
         )
+        }
+        }
+        // 大屏左侧 rail：常驻（不跟 chrome 一起淡出）。它不遮内容底边，
+        // 消失反而让下滑浏览时导航不可预期。pager 已让出 88dp，不会重叠。
+        if (spec.showsRail) {
+            SideRail(
+                items = DOCK_ITEMS,
+                selectedKey = DOCK_KEYS[pagerState.targetPage],
+                onSelect = { item ->
+                    scope.launch {
+                        pagerState.animateScrollToPage(DOCK_KEYS.indexOf(item.key).coerceAtLeast(0))
+                    }
+                },
+                modifier = Modifier.align(Alignment.CenterStart),
+            )
         }
         // 首页下拉刷新的转圈：必须在 overlay 层，否则被玻璃顶栏盖住看不见。
         // 只在首页显示，顶栏正下方居中。
@@ -534,6 +604,8 @@ fun IndexScreen(
                 isRefreshing = homePullRefreshing,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
+                    // 转圈要居中在「内容区」而不是整窗：大屏左侧有 rail，偏半个 rail。
+                    .offset(x = railDp / 2)
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .padding(top = 56.dp + 8.dp),
             )
@@ -542,8 +614,19 @@ fun IndexScreen(
     )
 }
 
+/** Dock / rail 共用的四个入口；顺序与 [DOCK_KEYS] 一一对应。 */
+private val DOCK_ITEMS = listOf(
+    DockSpec(key = "home", label = "首页", icon = DyIcons.Lantern),
+    DockSpec(key = "category", label = "分类", icon = DyIcons.Grid),
+    DockSpec(key = "discover", label = "发现", icon = DyIcons.Compass),
+    DockSpec(key = "mine", label = "我的", icon = DyIcons.Person),
+)
+
 /** Dock 项 key，下标与 Pager 页一一对应。 */
 private val DOCK_KEYS = listOf("home", "category", "discover", "mine")
+
+/** 发现页 16:9 大图流的最大内容宽度（大屏居中留白）。 */
+private const val DISCOVER_MAX_WIDTH_DP = 720f
 
 /**
  * 「推荐」页：首页版块流（FR-612）。
@@ -563,10 +646,17 @@ private fun RecommendPage(
     onOpenDetail: (String) -> Unit,
     onRetry: () -> Unit,
     state: androidx.compose.foundation.lazy.LazyListState,
+    columns: Int,
+    sidePadding: Dp,
 ) {
     when {
         // 首拉中：骨架与真实版块同尺寸，避免加载完成时跳动
-        cs.loading && cs.sections.isEmpty() -> HomeFeedSkeleton(topPadding, bottomPadding)
+        cs.loading && cs.sections.isEmpty() -> HomeFeedSkeleton(
+            topPadding = topPadding,
+            bottomPadding = bottomPadding,
+            columns = columns,
+            sidePadding = sidePadding,
+        )
         // 真失败（网络/源异常）：可重试。
         // 【v5 修复】原判断是 `cs.errMsg != null`——errMsg 是**非空 String**，
         // 该条件恒为 true，于是「版块为空但没有错误」时也走 ErrorView，且 message
@@ -593,6 +683,8 @@ private fun RecommendPage(
             topPadding = topPadding,
             bottomPadding = bottomPadding,
             state = state,
+            columns = columns,
+            sidePadding = sidePadding,
             onOpen = { v ->
                 onOpenDetail(
                     Routes.detail(
@@ -626,9 +718,19 @@ private fun PageContent(
     onRetry: () -> Unit,
     onNearEnd: () -> Unit,
     state: androidx.compose.foundation.lazy.grid.LazyGridState,
+    columns: Int,
+    posterHeight: Dp,
+    sidePadding: Dp,
 ) {
     when {
-        cs.loading && cs.items.isEmpty() -> SkeletonGrid(rememberSkeletonColor(), topPadding, bottomPadding)
+        cs.loading && cs.items.isEmpty() -> SkeletonGrid(
+            color = rememberSkeletonColor(),
+            topPadding = topPadding,
+            bottomPadding = bottomPadding,
+            columns = columns,
+            posterHeight = posterHeight,
+            sidePadding = sidePadding,
+        )
         cs.errMsg != null && cs.items.isEmpty() -> ErrorView(message = cs.errMsg ?: "", onRetry = onRetry)
         cs.items.isEmpty() -> Column(
             modifier = Modifier
@@ -653,9 +755,11 @@ private fun PageContent(
             }
             androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                 state = state,
-                columns = GridCells.Fixed(3),
+                columns = GridCells.Fixed(columns),
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = bottomPadding, top = topPadding),
+                // 超宽屏用内边距把内容夹在 1280dp 内：LazyVerticalGrid 的 item 始终
+                // 铺满约束，`fillMaxSize().widthIn(...)` 会被 fillMaxSize 先钉死而失效。
+                contentPadding = PaddingValues(start = sidePadding, end = sidePadding, bottom = bottomPadding, top = topPadding),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -663,7 +767,7 @@ private fun PageContent(
                     count = cs.items.size,
                     key = { cs.items[it].vod_id },
                 ) { i ->
-                    VideoCard(v = cs.items[i], onClick = {
+                    VideoCard(v = cs.items[i], posterHeight = posterHeight, onClick = {
                         onOpenDetail(
                             Routes.detail(
                                 vodId = cs.items[i].vod_id,
@@ -699,7 +803,7 @@ private fun PageContent(
 
 /** 首页海报卡：玻璃底、圆角海报、集数/评分角标、单行标题。 */
 @Composable
-private fun VideoCard(v: VideoItem, onClick: () -> Unit) {
+private fun VideoCard(v: VideoItem, posterHeight: Dp, onClick: () -> Unit) {
     GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
@@ -719,7 +823,7 @@ private fun VideoCard(v: VideoItem, onClick: () -> Unit) {
                     title = v.vod_name,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(140.dp),
+                        .height(posterHeight),
                     cornerRadius = 14,
                 )
                 // 角标（"更新至12集"/"高清"之类），压在海报左下
@@ -783,6 +887,11 @@ private fun CategoryPane(
     // 【v5.7.2】分类网格滚动方向回调：下滑=收起顶栏/Dock/chips（同一
     // chromeVisible），上滑呼出。与首页/发现页同口径，缺省不联动。
     onScrollDir: (Boolean) -> Unit = {},
+    columns: Int = 3,
+    posterHeight: Dp = 140.dp,
+    sidePadding: Dp = 12.dp,
+    chipHeight: Dp = 44.dp,
+    chipsSidePadding: Dp = 12.dp,
 ) {
     ScrollDirWatcher(
         pos = { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset },
@@ -819,10 +928,13 @@ private fun CategoryPane(
                 ) {
                 GlassSurface(
                     modifier = Modifier
-                        .padding(top = topPadding, start = 12.dp, end = 12.dp)
+                        // 大屏下 chips 行不跟着 1280dp 内容一起拉长：6 个分类均分整条
+                        // 1600dp 时每格 260dp，点起来像一条横幅。用左右内边距把整行
+                        // 夹到 840dp 并居中，高度取 48dp 满足大屏触控下限。
+                        .padding(top = topPadding, start = chipsSidePadding, end = chipsSidePadding)
                         .fillMaxWidth()
-                        .height(44.dp),
-                    shape = RoundedCornerShape(22.dp),
+                        .height(chipHeight),
+                    shape = RoundedCornerShape(chipHeight / 2),
                 ) {
                     BoxWithConstraints(Modifier.fillMaxHeight()) {
                         val count = categories.size - 1 // 下标 0 是「推荐」位，不在本页
@@ -884,6 +996,9 @@ private fun CategoryPane(
                     onRetry = onRetry,
                     onNearEnd = onNearEnd,
                     state = gridState,
+                    columns = columns,
+                    posterHeight = posterHeight,
+                    sidePadding = sidePadding,
                 )
             }
         }
@@ -1024,6 +1139,8 @@ private fun DiscoverPane(
     uiState: DiscoverUiState,
     topPadding: Dp,
     bottomPadding: Dp,
+    /** 超宽屏把 16:9 卡片夹到约 900dp 并居中（手机为 12dp）。 */
+    sidePadding: Dp = 12.dp,
     onOpenDetail: (String) -> Unit,
     onShuffle: () -> Unit,
     // 【v5.6 声音泄漏修复】本窗格是否为 pager 前台页。Dock 滑走时页面仍在
@@ -1427,7 +1544,7 @@ private fun DiscoverPane(
         // 六分类预热中：与首页/分类/搜索同节奏的骨架，几何对齐 16:9 内嵌播放卡；
         // 成型后一次到位，不再用居中转圈打断浏览预期。
         if (preparing) {
-            DiscoverSkeleton(topPadding, bottomPadding)
+            DiscoverSkeleton(topPadding, bottomPadding, sidePadding = sidePadding)
         } else {
             Column(
                 modifier = Modifier
@@ -1455,7 +1572,7 @@ private fun DiscoverPane(
         androidx.compose.foundation.lazy.LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 12.dp, top = topPadding, end = 12.dp, bottom = bottomPadding),
+            contentPadding = PaddingValues(start = sidePadding, top = topPadding, end = sidePadding, bottom = bottomPadding),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             items(count = feed.size, key = { feed[it].key }) { idx ->

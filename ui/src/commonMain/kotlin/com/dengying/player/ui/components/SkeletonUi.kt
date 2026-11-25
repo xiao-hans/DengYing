@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -73,24 +74,27 @@ fun SkeletonBlock(
     Box(modifier.clip(RoundedCornerShape(radius)).background(color))
 }
 
-/** 分类页 3 列海报骨架：140dp 海报 + 单行标题，与真实 VideoCard 对齐。 */
+/** 分类页海报骨架：默认 3 列 / 140dp，与改前的真实 VideoCard 逐像素一致。 */
 @Composable
 fun SkeletonGrid(
     color: androidx.compose.ui.graphics.Color,
     topPadding: Dp,
     bottomPadding: Dp,
+    columns: Int = 3,
+    posterHeight: Dp = 140.dp,
+    sidePadding: Dp = 12.dp,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
+        columns = GridCells.Fixed(columns),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = bottomPadding, top = topPadding),
+        contentPadding = PaddingValues(start = sidePadding, end = sidePadding, bottom = bottomPadding, top = topPadding),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         userScrollEnabled = false,
     ) {
-        items(9) {
+        items(columns * 3) {
             Column(modifier = Modifier.padding(vertical = 2.dp)) {
-                SkeletonBlock(color, Modifier.fillMaxWidth().height(140.dp), radius = 14.dp)
+                SkeletonBlock(color, Modifier.fillMaxWidth().height(posterHeight), radius = 14.dp)
                 SkeletonBlock(color, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).height(12.dp), radius = 3.dp)
             }
         }
@@ -130,11 +134,11 @@ fun SkeletonResultRows(color: androidx.compose.ui.graphics.Color) {
 
 /** 发现页骨架：与 DiscoverVideoCard 一致的 16:9 播放窗 + 下方文字条。 */
 @Composable
-fun DiscoverSkeleton(topPadding: Dp, bottomPadding: Dp) {
+fun DiscoverSkeleton(topPadding: Dp, bottomPadding: Dp, sidePadding: Dp = 12.dp) {
     val block = rememberSkeletonColor()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, top = topPadding, end = 12.dp, bottom = bottomPadding),
+        contentPadding = PaddingValues(start = sidePadding, top = topPadding, end = sidePadding, bottom = bottomPadding),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         userScrollEnabled = false,
     ) {
@@ -156,29 +160,41 @@ fun DiscoverSkeleton(topPadding: Dp, bottomPadding: Dp) {
     }
 }
 
-/** 首页版块骨架：Banner + 两行双列卡 + 一条 rail，尺寸与真实内容一致。 */
+/** 首页版块骨架：Banner + 两行卡（列数跟真实版式）+ 一条 rail。 */
 @Composable
-fun HomeFeedSkeleton(topPadding: Dp, bottomPadding: Dp) {
+fun HomeFeedSkeleton(
+    topPadding: Dp,
+    bottomPadding: Dp,
+    columns: Int = 2,
+    sidePadding: Dp = 0.dp,
+) {
     val block = rememberSkeletonColor()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
+        contentPadding = PaddingValues(start = sidePadding, end = sidePadding, top = topPadding, bottom = bottomPadding),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         userScrollEnabled = false,
     ) {
         item(key = "sk-hero") {
-            SkeletonBlock(
-                block,
-                Modifier.fillMaxWidth().padding(horizontal = 14.dp).aspectRatio(16f / 9f),
-                radius = 22.dp,
-            )
+            // Hero 与真实版式一致：超宽屏夹到 900dp 并居中。
+            Box(Modifier.fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                SkeletonBlock(
+                    block,
+                    Modifier
+                        .padding(horizontal = 14.dp)
+                        .widthIn(max = 900.dp)
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f),
+                    radius = 22.dp,
+                )
+            }
         }
         items(2) { _ ->
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                repeat(2) {
+                repeat(columns) {
                     SkeletonBlock(block, Modifier.weight(1f).height(128.dp), radius = 16.dp)
                 }
             }

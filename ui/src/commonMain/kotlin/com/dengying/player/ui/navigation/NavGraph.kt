@@ -1,6 +1,7 @@
 package com.dengying.player.ui.navigation
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -21,6 +22,8 @@ import com.dengying.player.ui.AppStartupSignals
 import com.dengying.player.ui.components.GlassBackdropState
 import com.dengying.player.ui.components.LocalGlassBackdrop
 import com.dengying.player.ui.components.glassBackdrop
+import com.dengying.player.ui.layout.AdaptiveSpec
+import com.dengying.player.ui.layout.LocalAdaptiveSpec
 import com.dengying.player.ui.pages.DetailScreen
 import com.dengying.player.ui.pages.DownloadsScreen
 import com.dengying.player.ui.pages.DiscoverHero
@@ -126,7 +129,10 @@ fun DengYingNavHost(
             nav.popBackStack()
         }
     }
-    Box(modifier = Modifier.fillMaxSize()) {
+    // 【大屏断点只在这里读一次】页面各自包 BoxWithConstraints 会重复 subcompose，
+    // 且不同层级测到的尺寸容易互相打架。这里只把结果下发，NavHost 的调用点不变：
+    // 转屏/改窗口只让消费方重组，导航栈、pager 与播放会话都不重建。
+    AdaptiveRoot {
         NavHost(navController = nav, startDestination = Routes.INDEX) {
 
         composable(Routes.INDEX) {
@@ -428,6 +434,25 @@ fun DengYingNavHost(
             )
         }
     }
+    }
+}
+
+/**
+ * 大屏断点的唯一读取点：量一次窗口，把 [AdaptiveSpec] 下发到整棵 UI 树。
+ *
+ * 不放在各页面里：页面各包一层 `BoxWithConstraints` 会重复 subcompose，
+ * 且嵌套层级不同时测到的尺寸会互相矛盾。`NavHost` 的调用点保持原样，
+ * 所以窗口尺寸变化只触发重组，不重建导航栈、pager 与播放会话。
+ */
+@Composable
+private fun AdaptiveRoot(content: @Composable () -> Unit) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val adaptive = remember(maxWidth, maxHeight) {
+            AdaptiveSpec.from(maxWidth.value, maxHeight.value)
+        }
+        CompositionLocalProvider(LocalAdaptiveSpec provides adaptive) {
+            Box(modifier = Modifier.fillMaxSize()) { content() }
+        }
     }
 }
 
