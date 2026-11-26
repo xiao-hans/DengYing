@@ -6,23 +6,29 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.interop.UIKitView
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import com.dengying.player.player.PlaybackProbe
 import com.dengying.player.player.PlayerEngine
 import com.dengying.player.ui.player.IosPlayerEngineHost
+import kotlinx.cinterop.CValue
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.useContents
 import platform.AVFoundation.AVLayerVideoGravityResize
 import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVLayerVideoGravityResizeAspectFill
 import platform.AVFoundation.AVPlayerLayer
 import platform.QuartzCore.CATransaction
 import platform.QuartzCore.kCATransactionDisableActions
+import platform.UIKit.UIColor
 import platform.UIKit.UIView
 import platform.UIKit.UIViewAutoresizingFlexibleHeight
 import platform.UIKit.UIViewAutoresizingFlexibleWidth
-import platform.UIKit.UIColor
 
 /**
  * iOS 播放画面承载（KMP P5-6 落真身）。
@@ -48,8 +54,15 @@ import platform.UIKit.UIColor
  *
  * ## 生命周期
  *
- * `DisposableEffect` 在离开组合时摘层并通知 host `surfaceInactive()`；host 在
- * 计数归零时只暂停、不释放（与 Android `PlaybackEngineHolder` 同语义）。
+ * `DisposableEffect` 在离开组合时通知 host `surfaceInactive()`；host 在计数归零时
+ * 只暂停、不释放（与 Android `PlaybackEngineHolder` 同语义）。摘层前先确认这一层
+ * 仍挂在**本视图**上：单例引擎的 [AVPlayerLayer] 会被新 surface 取走，旧 surface
+ * 的 `onDispose` 若无条件 `removeFromSuperlayer()`，会把已经挂到新视图上的层摘掉，
+ * 表现为「有声音、画面全黑」。
+ *
+ * 尺寸不能只在 `factory` 里设一次：`UIKitView` 的 view bounds 可能到布局后才非零。
+ * 这里用 `onSizeChanged` 触发一次重组，并在 `update` 里重新同步 `layer.frame`；
+ * 重组时 `view.bounds` 已是最终值。
  */
 @OptIn(ExperimentalForeignApi::class)
 @Composable
@@ -62,6 +75,12 @@ actual fun VideoSurface(
     // 引擎变化 ⇒ 整块重建（契约第 1 条）
     key(engine) {
         val layer = remember(engine) { engine?.viewHandle() as? AVPlayerLayer }
+        // UIKitView 的 factory/update 拿到的 view bounds 可能还是 0×0；布局完成后
+        // onSizeChanged 写这个 state，触发重组，update 再把 layer.frame 同步到最终 bounds。
+        val surfaceSize = remember(engine) { mutableStateOf(IntSize.Zero) }
+        val sizeTick = surfaceSize.value
+        // 只记引用，不做 state：factory 里写 state 会踩「组合期写入」的坑。
+        val hostView = remember(engine) { arrayOfNulls<UIView>(1) }
 
         if (layer == null) {
             // 没有可挂的层：保持黑底，且**不虚报** onBind(true)，
@@ -71,32 +90,44 @@ actual fun VideoSurface(
         }
 
         UIKitView(
-            modifier = modifier,
+            modifier = modifier.onSizeChanged { surfaceSize.value = it },
             factory = {
-                val view = UIView().apply {
-                    backgroundColor = UIColor.blackColor
-                    autoresizingMask =
-                        UIViewAutoresizingFlexibleWidth or
+                val view =
+                    UIView().apply {
+                        backgroundColor = UIColor.blackColor
+                        autoresizingMask =
+                            UIViewAutoresizingFlexibleWidth or
                             UIViewAutoresizingFlexibleHeight
-                }
-                view.layer.addSublayer(layer)
-                layer.videoGravity = when (zoomMode) {
-                    VideoZoomMode.FIT -> AVLayerVideoGravityResizeAspect
-                    VideoZoomMode.COVER -> AVLayerVideoGravityResizeAspectFill
-                    VideoZoomMode.FILL -> AVLayerVideoGravityResize
-                }
-                layer.frame = view.bounds
-                // 图层不参与隐式动画：进全屏/旋转时否则会看到一段「拉伸动画」
+                    }
+                hostView[0] = view
+                // 隐式动画必须在改动之前关；原实现 begin/commit 放在赋值之后，等于没关。
                 CATransaction.begin()
                 CATransaction.setValue(true, kCATransactionDisableActions)
+                view.layer.addSublayer(layer)
+                layer.videoGravity =
+                    when (zoomMode) {
+                        VideoZoomMode.FIT -> AVLayerVideoGravityResizeAspect
+                        VideoZoomMode.COVER -> AVLayerVideoGravityResizeAspectFill
+                        VideoZoomMode.FILL -> AVLayerVideoGravityResize
+                    }
+                layer.frame = view.bounds
                 CATransaction.commit()
+                PlaybackProbe.note(
+                    "ios-surface-factory",
+                    "view=${view.bounds.dims()} tick=${sizeTick.width}x${sizeTick.height}",
+                )
                 view
             },
             update = { view ->
+                hostView[0] = view
                 CATransaction.begin()
                 CATransaction.setValue(true, kCATransactionDisableActions)
                 layer.frame = view.bounds
                 CATransaction.commit()
+                PlaybackProbe.note(
+                    "ios-surface-update",
+                    "view=${view.bounds.dims()} tick=${sizeTick.width}x${sizeTick.height}",
+                )
             },
         )
 
@@ -107,11 +138,19 @@ actual fun VideoSurface(
                 // 不在这里 release 引擎：host 计数归零时只暂停（契约）
                 IosPlayerEngineHost.surfaceInactive()
                 onBind(false)
-                layer.removeFromSuperlayer()
+                // 单例 layer 可能已被新 surface 取走；只在它还挂在本视图上时才摘。
+                // 无条件 removeFromSuperlayer() 会把新视图上的 layer 一起摘掉。
+                val stillHere = layer.superlayer === hostView[0]?.layer
+                PlaybackProbe.note("ios-surface-detach", "stillHere=$stillHere")
+                if (stillHere) layer.removeFromSuperlayer()
             }
         }
     }
 }
+
+/** 只写尺寸，不写完整地址；用于黑屏排障。 */
+@OptIn(ExperimentalForeignApi::class)
+private fun CValue<platform.CoreGraphics.CGRect>.dims(): String = useContents { "${size.width.toInt()}x${size.height.toInt()}" }
 
 /** 无引擎时的黑底占满，与桌面 actual 同形 */
 @Composable
