@@ -18,6 +18,30 @@ class AdaptiveLayoutTest {
     }
 
     @Test
+    fun feedInsetOnlyCollapsesOnPortraitPhones() {
+        assertEquals(0f, AdaptiveSpec.from(347f, 753f).feedSidePaddingDp)
+        assertEquals(0f, AdaptiveSpec.from(617f, 1097f).feedSidePaddingDp)
+        assertEquals(0f, AdaptiveSpec.from(719.9f, 1097f).feedSidePaddingDp)
+        assertEquals(24f, AdaptiveSpec.from(800f, 1280f).feedSidePaddingDp)
+        assertEquals(32f, AdaptiveSpec.from(915f, 412f).feedSidePaddingDp)
+        assertEquals(24f, AdaptiveSpec.from(700f, 400f).feedSidePaddingDp)
+    }
+
+    @Test
+    fun landscapePhoneKeepsResponsiveSpacing() {
+        val landscape = AdaptiveSpec.from(915f, 412f)
+        assertEquals(WidthClass.Expanded, landscape.widthClass)
+        assertEquals(32f, landscape.sidePaddingDp)
+        assertEquals(32f, landscape.feedSidePaddingDp)
+        assertEquals(5, landscape.gridColumns)
+        assertEquals(34f, landscape.embeddedControlDp)
+        assertEquals(44f, landscape.fullscreenPrimaryDp)
+        assertEquals(40f, landscape.fullscreenSecondaryDp)
+        assertFalse(landscape.isLargeScreen)
+        assertFalse(landscape.detailTwoPane)
+    }
+
+    @Test
     fun phoneKeepsFrozenValues() {
         val phone = AdaptiveSpec.from(347f, 753f)
         assertEquals(WidthClass.Compact, phone.widthClass)
@@ -42,9 +66,9 @@ class AdaptiveLayoutTest {
         assertEquals(24f, medium.sidePaddingDp)
         assertEquals(720f, medium.heroMaxDp)
         assertEquals(128f, medium.railCardDp)
-        assertEquals(44f, medium.embeddedControlDp)
-        assertEquals(56f, medium.fullscreenPrimaryDp)
-        assertEquals(48f, medium.fullscreenSecondaryDp)
+        assertEquals(34f, medium.embeddedControlDp)
+        assertEquals(44f, medium.fullscreenPrimaryDp)
+        assertEquals(40f, medium.fullscreenSecondaryDp)
         assertFalse(medium.detailTwoPane)
 
         val expanded = AdaptiveSpec.from(840f, 800f)

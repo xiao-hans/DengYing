@@ -7,7 +7,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -17,21 +19,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.border
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -42,7 +42,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -62,29 +61,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.dengying.player.ui.layout.AdaptiveSpec
-import com.dengying.player.ui.layout.LocalAdaptiveSpec
-import com.dengying.player.ui.UiDepsHolder
 import com.dengying.player.core.CmsSources
-import com.dengying.player.data.net.HlsUtil
-import com.dengying.player.player.PlayerEngine
-import com.dengying.player.ui.platform.VideoSurface
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.random.Random
 import com.dengying.player.core.DiscoverItem
 import com.dengying.player.core.VideoItem
+import com.dengying.player.data.net.HlsUtil
+import com.dengying.player.player.PlayerEngine
+import com.dengying.player.ui.UiDepsHolder
 import com.dengying.player.ui.components.BottomDock
 import com.dengying.player.ui.components.DiscoverSkeleton
 import com.dengying.player.ui.components.DockSpec
@@ -92,17 +82,27 @@ import com.dengying.player.ui.components.DyIcon
 import com.dengying.player.ui.components.DyIcons
 import com.dengying.player.ui.components.ErrorView
 import com.dengying.player.ui.components.GlassChip
-import com.dengying.player.ui.components.HomeFeedSkeleton
+import com.dengying.player.ui.components.GlassPage
+import com.dengying.player.ui.components.GlassPullIndicator
 import com.dengying.player.ui.components.GlassSurface
+import com.dengying.player.ui.components.HomeFeedSkeleton
 import com.dengying.player.ui.components.Poster
 import com.dengying.player.ui.components.SkeletonGrid
 import com.dengying.player.ui.components.rememberSkeletonColor
-import com.dengying.player.ui.components.GlassPage
-import com.dengying.player.ui.components.GlassPullIndicator
+import com.dengying.player.ui.layout.AdaptiveSpec
+import com.dengying.player.ui.layout.LocalAdaptiveSpec
 import com.dengying.player.ui.navigation.Routes
+import com.dengying.player.ui.platform.VideoSurface
 import com.dengying.player.ui.theme.Glass
 import com.dengying.player.ui.theme.Palette
 import com.dengying.player.ui.viewmodel.IndexViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.random.Random
 
 /**
  * `HashMap<分类下标, (firstVisibleItemIndex, firstVisibleItemScrollOffset)>` 的保存器。
@@ -110,28 +110,31 @@ import com.dengying.player.ui.viewmodel.IndexViewModel
  * 只用 `Int`：`IntArray` 是 Bundle 原生支持的类型，不必再序列化。
  * 扁平化成一维（每 3 个一组：下标、index、offset），比 `listSaver` 少一层装箱。
  */
-private val ScrollPositionsSaver = androidx.compose.runtime.saveable.Saver<
-    HashMap<Int, Pair<Int, Int>>, IntArray>(
-    save = { map ->
-        val out = IntArray(map.size * 3)
-        var i = 0
-        for ((k, v) in map) {
-            out[i++] = k
-            out[i++] = v.first
-            out[i++] = v.second
-        }
-        out
-    },
-    restore = { arr ->
-        val map = HashMap<Int, Pair<Int, Int>>(arr.size / 3)
-        var i = 0
-        while (i + 2 < arr.size) {
-            map[arr[i]] = arr[i + 1] to arr[i + 2]
-            i += 3
-        }
-        map
-    },
-)
+private val ScrollPositionsSaver =
+    androidx.compose.runtime.saveable.Saver<
+        HashMap<Int, Pair<Int, Int>>,
+        IntArray,
+    >(
+        save = { map ->
+            val out = IntArray(map.size * 3)
+            var i = 0
+            for ((k, v) in map) {
+                out[i++] = k
+                out[i++] = v.first
+                out[i++] = v.second
+            }
+            out
+        },
+        restore = { arr ->
+            val map = HashMap<Int, Pair<Int, Int>>(arr.size / 3)
+            var i = 0
+            while (i + 2 < arr.size) {
+                map[arr[i]] = arr[i + 1] to arr[i + 2]
+                i += 3
+            }
+            map
+        },
+    )
 
 /**
  * 首页（玻璃化改版，2026-11-08）。
@@ -160,23 +163,30 @@ fun IndexScreen(
     /** 「我的」页点登录：进独立登录页，而不是就地展开表单 */
     onOpenLogin: () -> Unit,
     onOpenDetail: (String) -> Unit,
-    vm: IndexViewModel = androidx.lifecycle.viewmodel.compose.viewModel {
-        val deps = UiDepsHolder.get()
-        IndexViewModel(repo = deps.sources, cache = deps.pageCache, detailCache = deps.detailCache)
-    },
+    vm: IndexViewModel =
+        androidx.lifecycle.viewmodel.compose.viewModel {
+            val deps = UiDepsHolder.get()
+            IndexViewModel(repo = deps.sources, cache = deps.pageCache, detailCache = deps.detailCache)
+        },
 ) {
     val s = vm.state
     // 【大屏】断点由 NavGraph 根部读一次后下发，这里只消费。所有形态都保留 BottomDock。
     val spec = LocalAdaptiveSpec.current
     val sideDp = spec.sidePaddingDp.dp
-    val discoverSideDp = ((spec.widthDp - DISCOVER_MAX_WIDTH_DP).coerceAtLeast(0f) / 2f).dp
-    val feedSideDp = sideDp
+    // 宽屏时把发现流居中到 720dp；居中量为 0 的窄屏（竖屏手机）回落到基础边距，不能贴边。
+    val discoverCenterDp = (spec.widthDp - DISCOVER_MAX_WIDTH_DP).coerceAtLeast(0f) / 2f
+    val discoverSideDp =
+        (if (discoverCenterDp > 0f) discoverCenterDp else spec.sidePaddingDp).dp
+    // 首页内部各区块自带 14/18dp 内边距，窄屏基础层再加 12dp 会把手机版式挤窄；
+    // 宽屏才叠加窗口留白，横屏/平板的既有间距不变。
+    val feedSideDp = spec.feedSidePaddingDp.dp
     val contentMax = if (spec.contentMaxDp.isInfinite()) Dp.Infinity else spec.contentMaxDp.dp
     val heroMax = if (spec.heroMaxDp.isInfinite()) Dp.Infinity else spec.heroMaxDp.dp
     // 卡片宽度按真实网格宽度算一次，避免每张卡各自 subcompose 量一遍。
-    val gridCardWidthDp = (
-        (spec.widthDp.coerceAtMost(spec.contentMaxDp) - 2f * spec.sidePaddingDp) -
-            (spec.gridColumns - 1) * 10f
+    val gridCardWidthDp =
+        (
+            (spec.widthDp.coerceAtMost(spec.contentMaxDp) - 2f * spec.sidePaddingDp) -
+                (spec.gridColumns - 1) * 10f
         ) / spec.gridColumns
     val posterDp = AdaptiveSpec.posterHeight(gridCardWidthDp).dp
     // ---- v5 四窗格导航（首页/分类/发现/我的）----
@@ -214,24 +224,31 @@ fun IndexScreen(
     // `LazyGridState` 是活对象，只能活在组合里；跨组合保存它得靠 Saver，
     // 而 Saver 存进去的其实也只是一对 (index, offset)。直接存这对数字更直白，
     // 且能顺带把「切回该分类记住上次位置」的原有行为一并保住。
-    val savedScroll = androidx.compose.runtime.saveable.rememberSaveable(
-        saver = ScrollPositionsSaver,
-    ) { HashMap<Int, Pair<Int, Int>>() }
+    val savedScroll =
+        androidx.compose.runtime.saveable.rememberSaveable(
+            saver = ScrollPositionsSaver,
+        ) { HashMap<Int, Pair<Int, Int>>() }
     // 每个分类各一个滚动状态（网格页用 LazyGridState、推荐页用 LazyListState），
     // 由 Pager 的每一页各自持有。用分类下标作为 key：不同分类的状态互不干扰。
     // 首次创建时用已保存的位置做初值。位置的变化在各自那一页里用 snapshotFlow 记录。
-    val gridStates = androidx.compose.runtime.remember(s.categories.size) {
-        HashMap<Int, androidx.compose.foundation.lazy.grid.LazyGridState>()
-    }
-    val listStates = androidx.compose.runtime.remember(s.categories.size) {
-        HashMap<Int, androidx.compose.foundation.lazy.LazyListState>()
-    }
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState { 4 }
+    val gridStates =
+        androidx.compose.runtime.remember(s.categories.size) {
+            HashMap<Int, androidx.compose.foundation.lazy.grid.LazyGridState>()
+        }
+    val listStates =
+        androidx.compose.runtime.remember(s.categories.size) {
+            HashMap<Int, androidx.compose.foundation.lazy.LazyListState>()
+        }
+    val pagerState =
+        androidx.compose.foundation.pager
+            .rememberPagerState { 4 }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // 首页下拉刷新的转圈要画在玻璃顶栏之上，而顶栏在 GlassPage 的 overlay 层，
     // 所以 state 提到外层，由首页那一页的下拉手势写入、overlay 读取。
     // 必须在这里 remember：手势只会更新它拿到的那一个 state，换一个实例 overlay 就永远读到 0。
-    val homePullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    val homePullState =
+        androidx.compose.material3.pulltorefresh
+            .rememberPullToRefreshState()
     var homePullRefreshing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // 【v5.7 chrome 自动隐藏】用户需求：下滑看内容时收起顶栏（logo/搜索）、
     // 底部 Dock 和分类页的分类分段控件，上滑呼出。方向判定由各页滚动状态
@@ -244,10 +261,12 @@ fun IndexScreen(
         chromeVisible = true
         when (pagerState.settledPage) {
             0 -> vm.onShown(0)
+
             1 -> vm.onShown(catIdx)
+
             // 发现页：预热六个内容分类给混合片池当主体（已启动的分类自动跳过）
             2 -> vm.warmAllCategories()
-        // 我的页不拉数据
+            // 我的页不拉数据
         }
     }
     // 底部悬浮 Dock 的内容避让：Dock 本体高 60 + 悬浮边距 16 + 安全区。
@@ -271,317 +290,355 @@ fun IndexScreen(
     val homeHasContent = s.cat(0).items.isNotEmpty()
     LaunchedEffect(homeHasContent, poolReady) {
         if (homeHasContent || poolReady) {
-            com.dengying.player.ui.AppStartupSignals.markFirstContent()
+            com.dengying.player.ui.AppStartupSignals
+                .markFirstContent()
         }
     }
-    val picks = remember(poolReady, discoSeed, catItemCount) {
-        if (!poolReady) {
-            emptyList()
-        } else {
-            val repo = UiDepsHolder.get().sources
-            val cms = (1..6)
-                .flatMap { s.cat(it).items }
-                .distinctBy { it.vod_name ?: it.vod_id.toString() }
-            fun freeish(t: String) = t.contains("动画") || t.contains("动漫") || t.contains("少儿") ||
-                t.contains("儿童") || t.contains("亲子")
-            val tv = run {
-                val head = s.cat(0).sections.filter { freeish(it.title) }.flatMap { it.items }
-                val tail = s.cat(0).sections.filterNot { freeish(it.title) }.flatMap { it.items }
-                // head/tail 各自洗牌后拼接（不能合一起洗——加权会被打散）
-                (head.shuffled(Random(discoSeed)) + tail.shuffled(Random(discoSeed + 1)))
-                    .distinctBy { it.vod_id }
+    val picks =
+        remember(poolReady, discoSeed, catItemCount) {
+            if (!poolReady) {
+                emptyList()
+            } else {
+                val repo = UiDepsHolder.get().sources
+                val cms =
+                    (1..6)
+                        .flatMap { s.cat(it).items }
+                        .distinctBy { it.vod_name ?: it.vod_id.toString() }
+
+                fun freeish(t: String) =
+                    t.contains("动画") || t.contains("动漫") || t.contains("少儿") ||
+                        t.contains("儿童") || t.contains("亲子")
+                val tv =
+                    run {
+                        val head =
+                            s
+                                .cat(0)
+                                .sections
+                                .filter { freeish(it.title) }
+                                .flatMap { it.items }
+                        val tail =
+                            s
+                                .cat(0)
+                                .sections
+                                .filterNot { freeish(it.title) }
+                                .flatMap { it.items }
+                        // head/tail 各自洗牌后拼接（不能合一起洗——加权会被打散）
+                        (head.shuffled(Random(discoSeed)) + tail.shuffled(Random(discoSeed + 1)))
+                            .distinctBy { it.vod_id }
+                    }
+                val tvLimit = (cms.size / 3).coerceAtLeast(20)
+                (cms.shuffled(Random(discoSeed + 7)) + tv.take(tvLimit))
+                    .distinctBy { it.vod_name ?: it.vod_id.toString() }
+                    // 【源优选】发现页是「刷到即看」，必须只留能直接播的源：
+                    // 用户关掉的源 + playGap 非空（要登录/要会员）的源都不进池。
+                    // 池子因此变小也不放宽——进了池却播不了比少一张卡更伤。
+                    .filter { playableInDiscover(it, repo) }
             }
-            val tvLimit = (cms.size / 3).coerceAtLeast(20)
-            (cms.shuffled(Random(discoSeed + 7)) + tv.take(tvLimit))
-                .distinctBy { it.vod_name ?: it.vod_id.toString() }
-                // 【源优选】发现页是「刷到即看」，必须只留能直接播的源：
-                // 用户关掉的源 + playGap 非空（要登录/要会员）的源都不进池。
-                // 池子因此变小也不放宽——进了池却播不了比少一张卡更伤。
-                .filter { playableInDiscover(it, repo) }
         }
-    }
     // 【透射源】拆成「内容层（被采样）+ 玻璃浮层（去采样）」两个兄弟层：
     // 海报滚到顶栏/Dock 背后时，玻璃里透出的是真实封面而不是一片色雾。
     // 玻璃件绝不能留在 content 里，否则会录到自己 → 自引用栈溢出。
     GlassPage(
         modifier = Modifier.fillMaxSize(),
         content = {
-        // ---- 内容层（铺满全屏，从玻璃件背后穿过） ----
-        androidx.compose.foundation.pager.HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            // 预组合相邻各一页：滑到一半就能看见下一页内容。
-            // 取 1 而不是更大的值——每多预组合一页就多一整屏封面要解码。
-            beyondViewportPageCount = 1,
-        ) { page ->
-            // 悬浮层总高：顶栏一行 44 + 边距 ≈ 56dp，加状态栏
-            // 悬浮层总高：顶栏一行 44 + 边距 ≈ 56dp，加状态栏。
-            // 我的页（page 3）共享顶栏隐藏（v5），只留标题行高 ≈ 8dp 起排。
-            val topPad = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-                (if (page == 3) 8.dp else 56.dp)
-            when (page) {
-                // ---- 首页：天翼版块流（FR-612） ----
-                0 -> {
-                    val cs = s.cat(0)
-                    val listState = listStates.getOrPut(0) {
-                        val p = savedScroll[0]
-                        androidx.compose.foundation.lazy.LazyListState(p?.first ?: 0, p?.second ?: 0)
-                    }
-                    LaunchedEffect(listState) {
-                        androidx.compose.runtime.snapshotFlow {
-                            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-                        }.collect {
-                            savedScroll[0] = it
+            // ---- 内容层（铺满全屏，从玻璃件背后穿过） ----
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                // 预组合相邻各一页：滑到一半就能看见下一页内容。
+                // 取 1 而不是更大的值——每多预组合一页就多一整屏封面要解码。
+                beyondViewportPageCount = 1,
+            ) { page ->
+                // 悬浮层总高：顶栏一行 44 + 边距 ≈ 56dp，加状态栏
+                // 悬浮层总高：顶栏一行 44 + 边距 ≈ 56dp，加状态栏。
+                // 我的页（page 3）共享顶栏隐藏（v5），只留标题行高 ≈ 8dp 起排。
+                val topPad =
+                    WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
+                        (if (page == 3) 8.dp else 56.dp)
+                when (page) {
+                    // ---- 首页：天翼版块流（FR-612） ----
+                    0 -> {
+                        val cs = s.cat(0)
+                        val listState =
+                            listStates.getOrPut(0) {
+                                val p = savedScroll[0]
+                                androidx.compose.foundation.lazy
+                                    .LazyListState(p?.first ?: 0, p?.second ?: 0)
+                            }
+                        LaunchedEffect(listState) {
+                            androidx.compose.runtime
+                                .snapshotFlow {
+                                    listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                                }.collect {
+                                    savedScroll[0] = it
+                                }
+                        }
+                        ScrollDirWatcher(
+                            pos = { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset },
+                            onHide = { down -> chromeVisible = !down },
+                        )
+                        // 【下拉刷新】转圈不画在这里。内容层在 GlassPage 的采样层里，
+                        // 玻璃顶栏是浮在它之上的 overlay，转圈画在内容层会被顶栏整个盖住
+                        // （用户实测：下拉时看不见转圈）。手势写入外层那一个 state，转圈画进 overlay。
+                        homePullRefreshing = cs.refining
+                        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                            isRefreshing = cs.refining,
+                            onRefresh = { vm.refresh(0) },
+                            state = homePullState,
+                            modifier = Modifier.fillMaxSize(),
+                            indicator = {},
+                        ) {
+                            RecommendPage(
+                                cs = cs,
+                                topPadding = topPad,
+                                bottomPadding = bottomReserve,
+                                onOpenDetail = onOpenDetail,
+                                onRetry = { vm.loadData(0) },
+                                state = listState,
+                                columns = spec.feedColumns,
+                                sidePadding = feedSideDp,
+                                contentMax = contentMax,
+                                heroMax = heroMax,
+                                railCardWidth = spec.railCardDp.dp,
+                            )
                         }
                     }
-                    ScrollDirWatcher(
-                        pos = { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset },
-                        onHide = { down -> chromeVisible = !down },
-                    )
-                    // 【下拉刷新】转圈不画在这里。内容层在 GlassPage 的采样层里，
-                    // 玻璃顶栏是浮在它之上的 overlay，转圈画在内容层会被顶栏整个盖住
-                    // （用户实测：下拉时看不见转圈）。手势写入外层那一个 state，转圈画进 overlay。
-                    homePullRefreshing = cs.refining
-                    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-                        isRefreshing = cs.refining,
-                        onRefresh = { vm.refresh(0) },
-                        state = homePullState,
-                        modifier = Modifier.fillMaxSize(),
-                        indicator = {},
-                    ) {
-                        RecommendPage(
-                            cs = cs,
+
+                    // ---- 分类：聚合分类网格（chips 行在窗格内，不再挤顶栏） ----
+                    1 -> {
+                        CategoryPane(
+                            categories = s.categories,
+                            selected = catIdx,
+                            onSelect = { idx ->
+                                catIdx = idx
+                                vm.onShown(idx)
+                            },
+                            cs = s.cat(catIdx),
+                            category = s.categories[catIdx],
                             topPadding = topPad,
                             bottomPadding = bottomReserve,
+                            gridState =
+                                gridStates.getOrPut(catIdx) {
+                                    val p = savedScroll[catIdx]
+                                    androidx.compose.foundation.lazy.grid
+                                        .LazyGridState(p?.first ?: 0, p?.second ?: 0)
+                                },
+                            onScroll = { idx, off -> savedScroll[catIdx] = idx to off },
                             onOpenDetail = onOpenDetail,
-                            onRetry = { vm.loadData(0) },
-                            state = listState,
-                            columns = spec.feedColumns,
-                            sidePadding = feedSideDp,
-                            contentMax = contentMax,
-                            heroMax = heroMax,
-                            railCardWidth = spec.railCardDp.dp,
+                            onRetry = { vm.loadData(catIdx) },
+                            onNearEnd = { vm.loadMore(catIdx) },
+                            onRefresh = { vm.refresh(catIdx) },
+                            // v5.7：下滑收起分类分段控件（与顶栏/Dock 同步），上滑呼出
+                            chipsVisible = chromeVisible,
+                            // v5.7.2：网格滚动方向也驱动整组 chrome 显隐
+                            onScrollDir = { down -> chromeVisible = !down },
+                            columns = spec.gridColumns,
+                            posterHeight = posterDp,
+                            sidePadding = sideDp,
+                            chipHeight = 48.dp,
+                            chipsSidePadding = sideDp,
                         )
                     }
-                }
-                // ---- 分类：聚合分类网格（chips 行在窗格内，不再挤顶栏） ----
-                1 -> CategoryPane(
-                    categories = s.categories,
-                    selected = catIdx,
-                    onSelect = { idx ->
-                        catIdx = idx
-                        vm.onShown(idx)
-                    },
-                    cs = s.cat(catIdx),
-                    category = s.categories[catIdx],
-                    topPadding = topPad,
-                    bottomPadding = bottomReserve,
-                    gridState = gridStates.getOrPut(catIdx) {
-                        val p = savedScroll[catIdx]
-                        androidx.compose.foundation.lazy.grid.LazyGridState(p?.first ?: 0, p?.second ?: 0)
-                    },
-                    onScroll = { idx, off -> savedScroll[catIdx] = idx to off },
-                    onOpenDetail = onOpenDetail,
-                    onRetry = { vm.loadData(catIdx) },
-                    onNearEnd = { vm.loadMore(catIdx) },
-                    onRefresh = { vm.refresh(catIdx) },
-                    // v5.7：下滑收起分类分段控件（与顶栏/Dock 同步），上滑呼出
-                    chipsVisible = chromeVisible,
-                    // v5.7.2：网格滚动方向也驱动整组 chrome 显隐
-                    onScrollDir = { down -> chromeVisible = !down },
-                    columns = spec.gridColumns,
-                    posterHeight = posterDp,
-                    sidePadding = sideDp,
-                    chipHeight = 48.dp,
-                    chipsSidePadding = sideDp,
-                )
-                // ---- 发现：随机推荐 + 内嵌自动播放（v5，抖音式单播） ----
-                2 -> DiscoverPane(
-                    pool = picks,
-                    resume = discoverResume,
-                    uiState = discoverUi,
-                    topPadding = topPad,
-                    bottomPadding = bottomReserve,
-                    sidePadding = discoverSideDp,
-                    onOpenDetail = onOpenDetail,
-                    onShuffle = { discoSeed++ },
-                    // targetPage 在滑动开始即变 → 开始滑就停声（主流口径）
-                    active = pagerState.targetPage == 2,
-                    preparing = !poolReady,
-                    // v5.7：发现页下滑同样收起 chrome（监听在窗格自己的 listState 上）
-                    onScrollDir = { down -> chromeVisible = !down },
-                    // 换批代号：只有下拉刷新才重建列表（池子扩容不重建）
-                    feedKey = discoSeed,
-                    onNeedMore = {
-                        // 滑到这批尾部：顺便给还有分页的分类续拉（最多两个，防同时
-                        // 六路出网把中心项挤在队列里）。新条目进后续轮次，不动当前列表。
-                        val more = (1..6)
-                            .filter { idx ->
-                                val c = s.cat(idx)
-                                c.hasMore && !c.loadingMore && !c.loading
-                            }
-                            .shuffled()
-                            .take(2)
-                        more.forEach { vm.loadMore(it) }
-                    },
-                )
-                // ---- 我的：个人信息聚合（v5；共享顶栏在本页隐藏，自带页头） ----
-                3 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                    MineScreen(
-                        onOpenFavorites = onOpenFavorites,
-                        onOpenHistory = onOpenHistory,
-                        onOpenDownloads = onOpenDownloads,
-                        onOpenSettings = onOpenSettings,
-                        onOpenSourceStatus = onOpenSourceStatus,
-                        onOpenLiveChannels = onOpenLiveChannels,
-                        onOpenLogin = onOpenLogin,
-                        topPadding = topPad,
-                        bottomPadding = bottomReserve,
-                        // 1280dp 宽的通栏信息卡读起来要横着扫视；夹到 720dp 居中。
-                modifier = Modifier.widthIn(max = 720.dp).fillMaxHeight(),
-                    )
+
+                    // ---- 发现：随机推荐 + 内嵌自动播放（v5，抖音式单播） ----
+                    2 -> {
+                        DiscoverPane(
+                            pool = picks,
+                            resume = discoverResume,
+                            uiState = discoverUi,
+                            topPadding = topPad,
+                            bottomPadding = bottomReserve,
+                            sidePadding = discoverSideDp,
+                            onOpenDetail = onOpenDetail,
+                            onShuffle = { discoSeed++ },
+                            // targetPage 在滑动开始即变 → 开始滑就停声（主流口径）
+                            active = pagerState.targetPage == 2,
+                            preparing = !poolReady,
+                            // v5.7：发现页下滑同样收起 chrome（监听在窗格自己的 listState 上）
+                            onScrollDir = { down -> chromeVisible = !down },
+                            // 换批代号：只有下拉刷新才重建列表（池子扩容不重建）
+                            feedKey = discoSeed,
+                            onNeedMore = {
+                                // 滑到这批尾部：顺便给还有分页的分类续拉（最多两个，防同时
+                                // 六路出网把中心项挤在队列里）。新条目进后续轮次，不动当前列表。
+                                val more =
+                                    (1..6)
+                                        .filter { idx ->
+                                            val c = s.cat(idx)
+                                            c.hasMore && !c.loadingMore && !c.loading
+                                        }.shuffled()
+                                        .take(2)
+                                more.forEach { vm.loadMore(it) }
+                            },
+                        )
+                    }
+
+                    // ---- 我的：个人信息聚合（v5；共享顶栏在本页隐藏，自带页头） ----
+                    3 -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                            MineScreen(
+                                onOpenFavorites = onOpenFavorites,
+                                onOpenHistory = onOpenHistory,
+                                onOpenDownloads = onOpenDownloads,
+                                onOpenSettings = onOpenSettings,
+                                onOpenSourceStatus = onOpenSourceStatus,
+                                onOpenLiveChannels = onOpenLiveChannels,
+                                onOpenLogin = onOpenLogin,
+                                topPadding = topPad,
+                                bottomPadding = bottomReserve,
+                                // 1280dp 宽的通栏信息卡读起来要横着扫视；夹到 720dp 居中。
+                                modifier = Modifier.widthIn(max = 720.dp).fillMaxHeight(),
+                            )
+                        }
+                    }
                 }
             }
-        }
         },
         overlay = {
-        // ---- 悬浮层（玻璃顶栏：品牌 + 长条搜索框）----
-        // v5：「我的」页整条隐藏（该页自带页头 + 右上角设置钮）；搜索改长条。
-        // v5.7：再叠加滚动隐藏——任一窗格下滑时收起，上滑或切页复位。
-        androidx.compose.animation.AnimatedVisibility(
-            visible = chromeVisible && pagerState.targetPage != 3,
-            // 【只淡入淡出，不做纵向滑动】(DVP §8) 玻璃的折射是用"表面在根坐标里的
-            // 位置"对齐采样层的；纵向滑动动画期间这个对齐每帧在变，底边会画出错位
-            // 的双线。去掉滑动后玻璃只在固定位置淡入，底边干净。
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .widthIn(max = AdaptiveSpec.MAX_FULLSCREEN_DP.dp)
-                .align(Alignment.TopCenter)
-        ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                // 【必须补状态栏避让】三端内容都铺到状态栏底下：Android 用
-                // enableEdgeToEdge()，iOS 用 prefersStatusBarHidden/安全区外扩，
-                // 鸿蒙在 EntryAbility 调了 setWindowLayoutFullScreen(true)。
-                // 首页品牌条是普通页面（非全屏播放），仍要避让状态栏；
-                // 全屏播放的贴边口径见 InlinePlayer 的 6dp 规则。
-                .windowInsetsPadding(WindowInsets.statusBars)
-                // 顶栏内容限宽 1280dp 居中；搜索框另外限宽 560dp。
-                .padding(start = sideDp, end = sideDp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 玻璃品牌条（44dp 胶囊）。
-            // 【v5 修复】内层 Row 撑满胶囊高度再垂直居中——之前 Box 默认
-            // TopStart 对齐，文字在胶囊里不居中（用户实测截图）。
-            GlassSurface(
-                modifier = Modifier.height(44.dp),
-                shape = RoundedCornerShape(22.dp),
+            // ---- 悬浮层（玻璃顶栏：品牌 + 长条搜索框）----
+            // v5：「我的」页整条隐藏（该页自带页头 + 右上角设置钮）；搜索改长条。
+            // v5.7：再叠加滚动隐藏——任一窗格下滑时收起，上滑或切页复位。
+            androidx.compose.animation.AnimatedVisibility(
+                visible = chromeVisible && pagerState.targetPage != 3,
+                // 【只淡入淡出，不做纵向滑动】(DVP §8) 玻璃的折射是用"表面在根坐标里的
+                // 位置"对齐采样层的；纵向滑动动画期间这个对齐每帧在变，底边会画出错位
+                // 的双线。去掉滑动后玻璃只在固定位置淡入，底边干净。
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier =
+                    Modifier
+                        .widthIn(max = AdaptiveSpec.MAX_FULLSCREEN_DP.dp)
+                        .align(Alignment.TopCenter),
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(horizontal = 14.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            // 【必须补状态栏避让】三端内容都铺到状态栏底下：Android 用
+                            // enableEdgeToEdge()，iOS 用 prefersStatusBarHidden/安全区外扩，
+                            // 鸿蒙在 EntryAbility 调了 setWindowLayoutFullScreen(true)。
+                            // 首页品牌条是普通页面（非全屏播放），仍要避让状态栏；
+                            // 全屏播放的贴边口径见 InlinePlayer 的 6dp 规则。
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                            // 顶栏内容限宽 1280dp 居中；搜索框另外限宽 560dp。
+                            .padding(start = sideDp, end = sideDp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // 【品牌标记：矢量灯形】灯形与自适应图标前景 `ic_launcher_foreground.xml`
-                    // 同一造型（梯形灯罩 + 顶杆 + 光晕），启动图标与首页标题视觉同源。
-                    DyIcon(
-                        icon = DyIcons.Lantern,
-                        tint = Palette.Brand,
-                        size = 20.dp,
-                        modifier = Modifier.padding(end = 6.dp),
-                    )
-                    Text(
-                        text = "灯影",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = Palette.TextPrimary,
-                    )
+                    // 玻璃品牌条（44dp 胶囊）。
+                    // 【v5 修复】内层 Row 撑满胶囊高度再垂直居中——之前 Box 默认
+                    // TopStart 对齐，文字在胶囊里不居中（用户实测截图）。
+                    GlassSurface(
+                        modifier = Modifier.height(44.dp),
+                        shape = RoundedCornerShape(22.dp),
+                    ) {
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxHeight()
+                                    .padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // 【品牌标记：矢量灯形】灯形与自适应图标前景 `ic_launcher_foreground.xml`
+                            // 同一造型（梯形灯罩 + 顶杆 + 光晕），启动图标与首页标题视觉同源。
+                            DyIcon(
+                                icon = DyIcons.Lantern,
+                                tint = Palette.Brand,
+                                size = 20.dp,
+                                modifier = Modifier.padding(end = 6.dp),
+                            )
+                            Text(
+                                text = "灯影",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = Palette.TextPrimary,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    // 长条搜索框（v5）：占满剩余宽度，玻璃材质，整条可点
+                    GlassSurface(
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                // 超宽屏不让搜索框拉成 1100dp 的长条；手机宽度本来就不足 560dp。
+                                .widthIn(max = 560.dp)
+                                .height(44.dp),
+                        shape = RoundedCornerShape(22.dp),
+                    ) {
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxHeight()
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) { onOpenSearch("") }
+                                    .padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            DyIcon(
+                                icon = DyIcons.Search,
+                                tint = Palette.TextSecondary,
+                                size = 18.dp,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                            Text(
+                                text = "搜索片名、演员",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Palette.TextSecondary,
+                            )
+                        }
+                    }
                 }
             }
-            Spacer(Modifier.width(10.dp))
-            // 长条搜索框（v5）：占满剩余宽度，玻璃材质，整条可点
-            GlassSurface(
-                modifier = Modifier
-                    .weight(1f)
-                    // 超宽屏不让搜索框拉成 1100dp 的长条；手机宽度本来就不足 560dp。
-                    .widthIn(max = 560.dp)
-                    .height(44.dp),
-                shape = RoundedCornerShape(22.dp),
+            // ---- 底部悬浮 Dock（v4）：首页/分类/发现/我的 四窗格 ----
+            // 条下的内容从玻璃背后穿过时被 [GlassBackdropState] 采样实时磨砂。
+            // v5：选中项绑定 pagerState.targetPage —— 拖动翻页时高光跟着走
+            // （spring 动画在 BottomDock 内部平滑追踪），点 Dock 只负责滚动。
+            // v5.7：Dock 跟随滚动隐藏/呼出（与顶栏同一 chromeVisible）。
+            androidx.compose.animation.AnimatedVisibility(
+                visible = chromeVisible,
+                // 【只淡入淡出，不做纵向滑动】(DVP §8) Dock 是最明显的受害者：玻璃折射
+                // 按表面在根坐标里的位置对齐采样层，纵向滑动期间对齐每帧在变，收起再
+                // 呼出后底边会留一道错位的亮线。淡入淡出即可，Dock 自身有 spring 追踪。
+                enter = androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { onOpenSearch("") }
-                        .padding(horizontal = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    DyIcon(
-                        icon = DyIcons.Search,
-                        tint = Palette.TextSecondary,
-                        size = 18.dp,
-                        modifier = Modifier.padding(end = 8.dp),
-                    )
-                    Text(
-                        text = "搜索片名、演员",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Palette.TextSecondary,
-                    )
-                }
+                BottomDock(
+                    items = DOCK_ITEMS,
+                    selectedKey = DOCK_KEYS[pagerState.targetPage],
+                    onSelect = { item ->
+                        scope.launch {
+                            pagerState.animateScrollToPage(DOCK_KEYS.indexOf(item.key).coerceAtLeast(0))
+                        }
+                    },
+                )
             }
-        }
-        }
-        // ---- 底部悬浮 Dock（v4）：首页/分类/发现/我的 四窗格 ----
-        // 条下的内容从玻璃背后穿过时被 [GlassBackdropState] 采样实时磨砂。
-        // v5：选中项绑定 pagerState.targetPage —— 拖动翻页时高光跟着走
-        //（spring 动画在 BottomDock 内部平滑追踪），点 Dock 只负责滚动。
-        // v5.7：Dock 跟随滚动隐藏/呼出（与顶栏同一 chromeVisible）。
-        androidx.compose.animation.AnimatedVisibility(
-            visible = chromeVisible,
-            // 【只淡入淡出，不做纵向滑动】(DVP §8) Dock 是最明显的受害者：玻璃折射
-            // 按表面在根坐标里的位置对齐采样层，纵向滑动期间对齐每帧在变，收起再
-            // 呼出后底边会留一道错位的亮线。淡入淡出即可，Dock 自身有 spring 追踪。
-            enter = androidx.compose.animation.fadeIn(),
-            exit = androidx.compose.animation.fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-        BottomDock(
-            items = DOCK_ITEMS,
-            selectedKey = DOCK_KEYS[pagerState.targetPage],
-            onSelect = { item ->
-                scope.launch {
-                    pagerState.animateScrollToPage(DOCK_KEYS.indexOf(item.key).coerceAtLeast(0))
-                }
-            },
-        )
-        }
-        // 首页下拉刷新的转圈：必须在 overlay 层，否则被玻璃顶栏盖住看不见。
-        // 只在首页显示，顶栏正下方居中。
-        if (pagerState.targetPage == 0) {
-            GlassPullIndicator(
-                state = homePullState,
-                isRefreshing = homePullRefreshing,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(top = 56.dp + 8.dp),
-            )
-        }
+            // 首页下拉刷新的转圈：必须在 overlay 层，否则被玻璃顶栏盖住看不见。
+            // 只在首页显示，顶栏正下方居中。
+            if (pagerState.targetPage == 0) {
+                GlassPullIndicator(
+                    state = homePullState,
+                    isRefreshing = homePullRefreshing,
+                    modifier =
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                            .padding(top = 56.dp + 8.dp),
+                )
+            }
         },
     )
 }
 
 /** BottomDock 的四个入口；顺序与 [DOCK_KEYS] 一一对应。 */
-private val DOCK_ITEMS = listOf(
-    DockSpec(key = "home", label = "首页", icon = DyIcons.Lantern),
-    DockSpec(key = "category", label = "分类", icon = DyIcons.Grid),
-    DockSpec(key = "discover", label = "发现", icon = DyIcons.Compass),
-    DockSpec(key = "mine", label = "我的", icon = DyIcons.Person),
-)
+private val DOCK_ITEMS =
+    listOf(
+        DockSpec(key = "home", label = "首页", icon = DyIcons.Lantern),
+        DockSpec(key = "category", label = "分类", icon = DyIcons.Grid),
+        DockSpec(key = "discover", label = "发现", icon = DyIcons.Compass),
+        DockSpec(key = "mine", label = "我的", icon = DyIcons.Person),
+    )
 
 /** Dock 项 key，下标与 Pager 页一一对应。 */
 private val DOCK_KEYS = listOf("home", "category", "discover", "mine")
@@ -615,58 +672,70 @@ private fun RecommendPage(
 ) {
     when {
         // 首拉中：骨架与真实版块同尺寸，避免加载完成时跳动
-        cs.loading && cs.sections.isEmpty() -> HomeFeedSkeleton(
-            topPadding = topPadding,
-            bottomPadding = bottomPadding,
-            columns = columns,
-            sidePadding = sidePadding,
-            contentMax = contentMax,
-            heroMax = heroMax,
-            railCardWidth = railCardWidth,
-        )
+        cs.loading && cs.sections.isEmpty() -> {
+            HomeFeedSkeleton(
+                topPadding = topPadding,
+                bottomPadding = bottomPadding,
+                columns = columns,
+                sidePadding = sidePadding,
+                contentMax = contentMax,
+                heroMax = heroMax,
+                railCardWidth = railCardWidth,
+            )
+        }
+
         // 真失败（网络/源异常）：可重试。
         // 【v5 修复】原判断是 `cs.errMsg != null`——errMsg 是**非空 String**，
         // 该条件恒为 true，于是「版块为空但没有错误」时也走 ErrorView，且 message
         // 是空串 → 屏幕一片空白，看着就像「下拉刷新没反应」。改成按空串判断。
-        cs.sections.isEmpty() && cs.errMsg.isNotEmpty() -> ErrorView(message = cs.errMsg, onRetry = onRetry)
+        cs.sections.isEmpty() && cs.errMsg.isNotEmpty() -> {
+            ErrorView(message = cs.errMsg, onRetry = onRetry)
+        }
+
         // 源未启用或版块拉空：给引导文案，不算失败态
-        cs.sections.isEmpty() -> Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = topPadding),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text("首页暂时没有内容", style = MaterialTheme.typography.bodyLarge, color = Palette.TextSecondary)
-            Text(
-                "下拉刷新再试一次。还是没有，去“我的”里打开更多片源。",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextSecondary,
-                modifier = Modifier.padding(top = 6.dp),
+        cs.sections.isEmpty() -> {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(top = topPadding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text("首页暂时没有内容", style = MaterialTheme.typography.bodyLarge, color = Palette.TextSecondary)
+                Text(
+                    "下拉刷新再试一次。还是没有，去“我的”里打开更多片源。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextSecondary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
+
+        else -> {
+            HomeFeedView(
+                sections = cs.sections,
+                topPadding = topPadding,
+                bottomPadding = bottomPadding,
+                state = state,
+                columns = columns,
+                sidePadding = sidePadding,
+                contentMax = contentMax,
+                heroMax = heroMax,
+                railCardWidth = railCardWidth,
+                onOpen = { v ->
+                    onOpenDetail(
+                        Routes.detail(
+                            vodId = v.vod_id,
+                            source = v._source ?: "",
+                            name = v.vod_name,
+                            pic = v.vod_pic,
+                            vodUri = v.vod_uri ?: "",
+                        ),
+                    )
+                },
             )
         }
-        else -> HomeFeedView(
-            sections = cs.sections,
-            topPadding = topPadding,
-            bottomPadding = bottomPadding,
-            state = state,
-            columns = columns,
-            sidePadding = sidePadding,
-            contentMax = contentMax,
-            heroMax = heroMax,
-            railCardWidth = railCardWidth,
-            onOpen = { v ->
-                onOpenDetail(
-                    Routes.detail(
-                        vodId = v.vod_id,
-                        source = v._source ?: "",
-                        name = v.vod_name,
-                        pic = v.vod_pic,
-                        vodUri = v.vod_uri ?: "",
-                    )
-                )
-            },
-        )
     }
 }
 
@@ -693,35 +762,48 @@ private fun PageContent(
     sidePadding: Dp,
 ) {
     when {
-        cs.loading && cs.items.isEmpty() -> SkeletonGrid(
-            color = rememberSkeletonColor(),
-            topPadding = topPadding,
-            bottomPadding = bottomPadding,
-            columns = columns,
-            posterHeight = posterHeight,
-            sidePadding = sidePadding,
-        )
-        cs.errMsg != null && cs.items.isEmpty() -> ErrorView(message = cs.errMsg ?: "", onRetry = onRetry)
-        cs.items.isEmpty() -> Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = topPadding),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text("暂无内容，下拉刷新试试", style = MaterialTheme.typography.bodyLarge, color = Palette.TextSecondary)
+        cs.loading && cs.items.isEmpty() -> {
+            SkeletonGrid(
+                color = rememberSkeletonColor(),
+                topPadding = topPadding,
+                bottomPadding = bottomPadding,
+                columns = columns,
+                posterHeight = posterHeight,
+                sidePadding = sidePadding,
+            )
         }
+
+        cs.errMsg != null && cs.items.isEmpty() -> {
+            ErrorView(message = cs.errMsg ?: "", onRetry = onRetry)
+        }
+
+        cs.items.isEmpty() -> {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(top = topPadding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text("暂无内容，下拉刷新试试", style = MaterialTheme.typography.bodyLarge, color = Palette.TextSecondary)
+            }
+        }
+
         else -> {
             // 【触底预加载】不设"加载更多"按钮：滚到离底 6 个格位就静默续页，
             // 手感与主流 App 一致。放进 `snapshotFlow` 是因为布局信息是快照态，
             // collect 会在每次可见集合变化时重新给值，天然覆盖"加载完又滚"的场景。
             LaunchedEffect(state, cs.items.size, cs.hasMore) {
                 if (!cs.hasMore) return@LaunchedEffect
-                androidx.compose.runtime.snapshotFlow {
-                    state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                }.collect { last ->
-                    if (last >= cs.items.size - 6 && !cs.loading) onNearEnd()
-                }
+                androidx.compose.runtime
+                    .snapshotFlow {
+                        state.layoutInfo.visibleItemsInfo
+                            .lastOrNull()
+                            ?.index ?: -1
+                    }.collect { last ->
+                        if (last >= cs.items.size - 6 && !cs.loading) onNearEnd()
+                    }
             }
             androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                 state = state,
@@ -745,16 +827,17 @@ private fun PageContent(
                                 name = cs.items[i].vod_name ?: "",
                                 pic = cs.items[i].vod_pic ?: "",
                                 vodUri = cs.items[i].vod_uri ?: "",
-                            )
+                            ),
                         )
                     })
                 }
                 if (cs.hasMore) {
                     item(key = "load-more", span = { GridItemSpan(maxLineSpan) }) {
                         Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             if (cs.loading) {
@@ -773,27 +856,34 @@ private fun PageContent(
 
 /** 首页海报卡：玻璃底、圆角海报、集数/评分角标、单行标题。 */
 @Composable
-private fun VideoCard(v: VideoItem, posterHeight: Dp, onClick: () -> Unit) {
+private fun VideoCard(
+    v: VideoItem,
+    posterHeight: Dp,
+    onClick: () -> Unit,
+) {
     GlassSurface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
         shape = RoundedCornerShape(14.dp),
         elevation = 6.dp,
         liquid = false,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onClick),
         ) {
             Box {
                 Poster(
                     url = v.vod_pic,
                     title = v.vod_name,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(posterHeight),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(posterHeight),
                     cornerRadius = 14,
                 )
                 // 角标（"更新至12集"/"高清"之类），压在海报左下
@@ -804,14 +894,15 @@ private fun VideoCard(v: VideoItem, posterHeight: Dp, onClick: () -> Unit) {
                         color = androidx.compose.ui.graphics.Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(4.dp)
-                            .background(
-                                androidx.compose.ui.graphics.Color(0x99000000),
-                                RoundedCornerShape(5.dp),
-                            )
-                            .padding(horizontal = 5.dp, vertical = 2.dp),
+                        modifier =
+                            Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(4.dp)
+                                .background(
+                                    androidx.compose.ui.graphics
+                                        .Color(0x99000000),
+                                    RoundedCornerShape(5.dp),
+                                ).padding(horizontal = 5.dp, vertical = 2.dp),
                     )
                 }
             }
@@ -821,9 +912,10 @@ private fun VideoCard(v: VideoItem, posterHeight: Dp, onClick: () -> Unit) {
                 color = Palette.TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
             )
         }
     }
@@ -869,7 +961,9 @@ private fun CategoryPane(
     )
     Column(Modifier.fillMaxSize()) {
         // 同首页：玻璃 indicator 落在分段控件**下方**，不压在胶囊上。
-        val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+        val pullState =
+            androidx.compose.material3.pulltorefresh
+                .rememberPullToRefreshState()
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = cs.refining,
             onRefresh = onRefresh,
@@ -879,9 +973,10 @@ private fun CategoryPane(
                 GlassPullIndicator(
                     state = pullState,
                     isRefreshing = cs.refining,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = topPadding + 52.dp),
+                    modifier =
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = topPadding + 52.dp),
                 )
             },
         ) {
@@ -896,65 +991,71 @@ private fun CategoryPane(
                     enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
                     exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically(),
                 ) {
-                GlassSurface(
-                    modifier = Modifier
-                        // 大屏下 chips 行不跟着 1280dp 内容一起拉长：6 个分类均分整条
-                        // 1600dp 时每格 260dp，点起来像一条横幅。用左右内边距把整行
-                        // 夹到 840dp 并居中，高度取 48dp 满足大屏触控下限。
-                        .padding(top = topPadding, start = chipsSidePadding, end = chipsSidePadding)
-                        .fillMaxWidth()
-                        .height(chipHeight),
-                    shape = RoundedCornerShape(chipHeight / 2),
-                ) {
-                    BoxWithConstraints(Modifier.fillMaxHeight()) {
-                        val count = categories.size - 1 // 下标 0 是「推荐」位，不在本页
-                        val cell = maxWidth / count
-                        val hlX by androidx.compose.animation.core.animateDpAsState(
-                            targetValue = cell * (selected - 1).coerceIn(0, count - 1),
-                            animationSpec = androidx.compose.animation.core.spring(
-                                dampingRatio = 0.9f,
-                                stiffness = 380f,
-                            ),
-                            label = "catHl",
-                        )
-                        // 高光在下层：先画高光胶囊，再叠文字行
-                        Box(
+                    GlassSurface(
+                        modifier =
                             Modifier
-                                .offset(x = hlX)
-                                .width(cell)
-                                .fillMaxHeight()
-                                .padding(4.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(Glass.DockHighlight)
-                                .border(1.dp, Glass.Border, RoundedCornerShape(18.dp)),
-                        )
-                        Row(Modifier.fillMaxSize()) {
-                            for (i in 1 until categories.size) {
-                                val idx = i
-                                val sel = selected == idx
-                                val tag = remember(idx) { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                                Box(
-                                    Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .clickable(
-                                            interactionSource = tag,
-                                            indication = null,
-                                        ) { onSelect(idx) },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(
-                                        text = categories[idx],
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (sel) Palette.TextPrimary else Palette.TextSecondary,
-                                        maxLines = 1,
-                                    )
+                                // 大屏下 chips 行不跟着 1280dp 内容一起拉长：6 个分类均分整条
+                                // 1600dp 时每格 260dp，点起来像一条横幅。用左右内边距把整行
+                                // 夹到 840dp 并居中，高度取 48dp 满足大屏触控下限。
+                                .padding(top = topPadding, start = chipsSidePadding, end = chipsSidePadding)
+                                .fillMaxWidth()
+                                .height(chipHeight),
+                        shape = RoundedCornerShape(chipHeight / 2),
+                    ) {
+                        BoxWithConstraints(Modifier.fillMaxHeight()) {
+                            val count = categories.size - 1 // 下标 0 是「推荐」位，不在本页
+                            val cell = maxWidth / count
+                            val hlX by androidx.compose.animation.core.animateDpAsState(
+                                targetValue = cell * (selected - 1).coerceIn(0, count - 1),
+                                animationSpec =
+                                    androidx.compose.animation.core.spring(
+                                        dampingRatio = 0.9f,
+                                        stiffness = 380f,
+                                    ),
+                                label = "catHl",
+                            )
+                            // 高光在下层：先画高光胶囊，再叠文字行
+                            Box(
+                                Modifier
+                                    .offset(x = hlX)
+                                    .width(cell)
+                                    .fillMaxHeight()
+                                    .padding(4.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Glass.DockHighlight)
+                                    .border(1.dp, Glass.Border, RoundedCornerShape(18.dp)),
+                            )
+                            Row(Modifier.fillMaxSize()) {
+                                for (i in 1 until categories.size) {
+                                    val idx = i
+                                    val sel = selected == idx
+                                    val tag =
+                                        remember(idx) {
+                                            androidx.compose.foundation.interaction
+                                                .MutableInteractionSource()
+                                        }
+                                    Box(
+                                        Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clickable(
+                                                interactionSource = tag,
+                                                indication = null,
+                                            ) { onSelect(idx) },
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            text = categories[idx],
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (sel) Palette.TextPrimary else Palette.TextSecondary,
+                                            maxLines = 1,
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
                 }
                 PageContent(
                     cs = cs,
@@ -975,9 +1076,10 @@ private fun CategoryPane(
     }
     // 滚动位置记录：PageContent 内部不便回传，在这里用状态对象观察
     LaunchedEffect(gridState) {
-        androidx.compose.runtime.snapshotFlow {
-            gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
-        }.collect { (idx, off) -> onScroll(idx, off) }
+        androidx.compose.runtime
+            .snapshotFlow {
+                gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+            }.collect { (idx, off) -> onScroll(idx, off) }
     }
 }
 
@@ -1009,8 +1111,12 @@ private fun ScrollDirWatcher(
         var prev = cur()
         var accum = 0
         androidx.compose.runtime.snapshotFlow { cur() }.collect { now ->
-            val d = if (now.first == prev.first) now.second - prev.second
-            else (now.first - prev.first) * 100000
+            val d =
+                if (now.first == prev.first) {
+                    now.second - prev.second
+                } else {
+                    (now.first - prev.first) * 100000
+                }
             prev = now
             if (d == 0) return@collect
             accum += d
@@ -1035,6 +1141,7 @@ private fun ScrollDirWatcher(
  * 【自动播放判定（主流口径）】滚动停止后，取视口中心最近、可见面积过半的
  * 项解析起播；拖动中不播。单引擎天然保证同屏只有一个声音。
  */
+
 /**
  * 发现页的「跨页重建」状态持有者。
  *
@@ -1053,12 +1160,16 @@ internal class DiscoverResume {
     /** 列表滚动位置（项下标 + 项内偏移）。 */
     val listIndex = androidx.compose.runtime.mutableIntStateOf(0)
     val listOffset = androidx.compose.runtime.mutableIntStateOf(0)
+
     /** 当前自动播放的项（-1 = 无）。 */
     val playingIdx = androidx.compose.runtime.mutableIntStateOf(-1)
+
     /** 引擎里装的是不是本窗格这一项（-1 = 没起播过）。 */
     val startedIdx = androidx.compose.runtime.mutableIntStateOf(-1)
+
     /** 各项断点（下标 → ms）。 */
     val paused = androidx.compose.runtime.mutableStateMapOf<Int, Long>()
+
     /** 解析结果缓存：下标 → (直链, headers, 是否试看链)。跨重建复用，免二次解析。 */
     val resolved = androidx.compose.runtime.mutableStateMapOf<Int, Triple<String, String, Boolean>>()
 }
@@ -1094,10 +1205,11 @@ internal class DiscoverUiState {
             resume.playingIdx.intValue = -1
         }
         val src = feedSource ?: DiscoverFeedSource().also { feedSource = it }
-        val list = feed ?: androidx.compose.runtime.mutableStateListOf<DiscoverEntry>().also {
-            if (pool.isNotEmpty()) it.addAll(src.nextBatch(pool))
-            feed = it
-        }
+        val list =
+            feed ?: androidx.compose.runtime.mutableStateListOf<DiscoverEntry>().also {
+                if (pool.isNotEmpty()) it.addAll(src.nextBatch(pool))
+                feed = it
+            }
         return src to list
     }
 }
@@ -1128,10 +1240,11 @@ private fun DiscoverPane(
     onNeedMore: () -> Unit = {},
 ) {
     // 滚动位置跨页重建：从持有者恢复初值，滚动时回写（切到首页再回来仍在原处）
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState(
-        initialFirstVisibleItemIndex = resume.listIndex.intValue,
-        initialFirstVisibleItemScrollOffset = resume.listOffset.intValue,
-    )
+    val listState =
+        androidx.compose.foundation.lazy.rememberLazyListState(
+            initialFirstVisibleItemIndex = resume.listIndex.intValue,
+            initialFirstVisibleItemScrollOffset = resume.listOffset.intValue,
+        )
     ScrollDirWatcher(
         pos = { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset },
         onHide = onScrollDir,
@@ -1149,10 +1262,11 @@ private fun DiscoverPane(
     // 拿不到就退化 NullPlayerEngine：只浏览不自动播，VideoSurface 渲染空画面。
     // Android 侧 engine() 恒成功，runCatching 不改变任何行为。
     // Android 壳提供独立预览引擎（2.5s 起播缓冲）；其它平台默认等于 engine()。
-    val engine = remember {
-        runCatching { deps.engineHost.previewEngine() }
-            .getOrElse { runCatching { deps.engineHost.engine() }.getOrElse { com.dengying.player.player.NullPlayerEngine } }
-    }
+    val engine =
+        remember {
+            runCatching { deps.engineHost.previewEngine() }
+                .getOrElse { runCatching { deps.engineHost.engine() }.getOrElse { com.dengying.player.player.NullPlayerEngine } }
+        }
     // 【无限流】显示列表 = 按轮追加：一轮内洗牌遍历当前池，取尽后轮次 +1 重洗。
     // 只在换批（[feedKey] = discoSeed）时重建；池子扩容只影响后续轮次，
     // 已有卡片、解析缓存和滚动位置都不动。
@@ -1163,6 +1277,7 @@ private fun DiscoverPane(
     val (feedSource, feed) = remember(feedKey, uiState) { uiState.feedFor(feedKey, pool) }
     // 池子是每次取批时传入的「最新值」：分类分页可在浏览中陆续到货
     val currentPool by androidx.compose.runtime.rememberUpdatedState(pool)
+
     fun appendBatch() {
         val more = feedSource.nextBatch(currentPool)
         if (more.isNotEmpty()) feed.addAll(more)
@@ -1203,12 +1318,14 @@ private fun DiscoverPane(
     var playingIdx by resume.playingIdx
     // 视频画面是否在屏上（控制引擎的 surface 引用计数，防止后台偷解码）
     var surfaceOn by remember { mutableStateOf(false) }
+
     fun setSurface(on: Boolean) {
         if (on != surfaceOn) {
             surfaceOn = on
             if (on) deps.engineHost.surfaceActive() else deps.engineHost.surfaceInactive()
         }
     }
+
     suspend fun resolveChainOf(
         idx: Int,
         altLimit: Int = 3,
@@ -1224,27 +1341,29 @@ private fun DiscoverPane(
                 return Triple(it.url, it.headers, it.previewOnly)
             }
         }
-        val result = runCatching {
-            com.dengying.player.playback.resolvePlayChain(
-                repo = deps.sources,
-                raw = discoverRawUrl(deps, vod, forceNet = forceNet),
-                source = vod._source ?: "",
-                vodId = vod.vod_id,
-                vodName = vod.vod_name ?: "",
-                episodeIndex = 0,
-                ioDispatcher = com.dengying.player.platform.ioDispatcher,
-                altLimit = altLimit, // 发现页批量预解析默认只试 3 个，防出网闸拥塞；中心卡全量重试传 MAX
-                // 【先出画面，再换全片】这里**不再**阻塞等全片：真机上 12s 预算里
-                // 跨源兜底常排到队尾，用户看到的是长时间黑卡。改成先返回首个可播
-                // 地址（直链或试看）立刻起播，全片搜索交给起播后的后台升级（见起播
-                // 效果里的 previewOnly 分支），拿到全片再原位换链、保留进度。
-                waitForFullSource = waitForFullSource,
-            )
-        }.getOrNull()?.let { Triple(it.url, it.headers, it.previewOnly) }
+        val result =
+            runCatching {
+                com.dengying.player.playback.resolvePlayChain(
+                    repo = deps.sources,
+                    raw = discoverRawUrl(deps, vod, forceNet = forceNet),
+                    source = vod._source ?: "",
+                    vodId = vod.vod_id,
+                    vodName = vod.vod_name ?: "",
+                    episodeIndex = 0,
+                    ioDispatcher = com.dengying.player.platform.ioDispatcher,
+                    altLimit = altLimit, // 发现页批量预解析默认只试 3 个，防出网闸拥塞；中心卡全量重试传 MAX
+                    // 【先出画面，再换全片】这里**不再**阻塞等全片：真机上 12s 预算里
+                    // 跨源兜底常排到队尾，用户看到的是长时间黑卡。改成先返回首个可播
+                    // 地址（直链或试看）立刻起播，全片搜索交给起播后的后台升级（见起播
+                    // 效果里的 previewOnly 分支），拿到全片再原位换链、保留进度。
+                    waitForFullSource = waitForFullSource,
+                )
+            }.getOrNull()?.let { Triple(it.url, it.headers, it.previewOnly) }
         if (result != null && result.first.isNotEmpty()) {
             DiscoverUrlCache.put(cacheKey, result.first, result.second, result.third)
             // 冷启动第一条可播地址到了：发现页的详情预取与更新检查可以放行了。
-            com.dengying.player.ui.AppStartupSignals.markFirstPlayableUrl()
+            com.dengying.player.ui.AppStartupSignals
+                .markFirstPlayableUrl()
         }
         return result
     }
@@ -1279,14 +1398,23 @@ private fun DiscoverPane(
     LaunchedEffect(feedKey, feed.isNotEmpty()) {
         if (feed.isEmpty()) return@LaunchedEffect
         snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.map { it.index }.sorted()
+            listState.layoutInfo.visibleItemsInfo
+                .map { it.index }
+                .sorted()
         }.collect { visible ->
             val li = listState.layoutInfo
             val center = li.viewportStartOffset + li.viewportSize.height / 2
             // 中心近的先解析（信号量 FIFO，先 launch 先入闸 → 中心项最先就绪）
             visible
-                .map { idx -> idx to (listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == idx }?.let { kotlin.math.abs(it.offset + it.size / 2 - center) } ?: Int.MAX_VALUE) }
-                .sortedBy { it.second }
+                .map { idx ->
+                    idx to
+                        (
+                            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == idx }?.let {
+                                kotlin.math.abs(it.offset + it.size / 2 - center)
+                            }
+                                ?: Int.MAX_VALUE
+                        )
+                }.sortedBy { it.second }
                 .forEach { (idx, _) ->
                     if (idx < feed.size && resolved[idx] == null && idx !in inFlight) {
                         inFlight.add(idx)
@@ -1353,15 +1481,16 @@ private fun DiscoverPane(
         if (hit.third && idx < feed.size) {
             val vod = feed[idx].vod
             launch {
-                val full = withTimeoutOrNull(20_000) {
-                    com.dengying.player.playback.findFullSource(
-                        repo = deps.sources,
-                        source = vod._source ?: "",
-                        vodName = vod.vod_name ?: "",
-                        episodeIndex = 0,
-                        ioDispatcher = com.dengying.player.platform.ioDispatcher,
-                    )
-                } ?: return@launch
+                val full =
+                    withTimeoutOrNull(20_000) {
+                        com.dengying.player.playback.findFullSource(
+                            repo = deps.sources,
+                            source = vod._source ?: "",
+                            vodName = vod.vod_name ?: "",
+                            episodeIndex = 0,
+                            ioDispatcher = com.dengying.player.platform.ioDispatcher,
+                        )
+                    } ?: return@launch
                 if (playingIdx != idx || engine.currentUrl != hit.first) return@launch
                 val pos = engine.currentPosition
                 // 后台换到全片后覆盖进程级缓存里的试看链，滑回来直接播全片。
@@ -1399,7 +1528,9 @@ private fun DiscoverPane(
                 failed = failed,
                 attempts = attempts,
             )
-        ) return@LaunchedEffect
+        ) {
+            return@LaunchedEffect
+        }
         retryCount[idx] = attempts + 1
         // 退避：第 1 次立刻重试（多数是解析时序问题），之后 1.2s、2.4s。
         if (attempts > 0) kotlinx.coroutines.delay(1200L * attempts)
@@ -1411,16 +1542,18 @@ private fun DiscoverPane(
                 deps.sources.awaitCompleteAltSources(feed[idx].vod.vod_name ?: "")
             }
         }
-        val r = resolveSlots.withPermit {
-            resolveChainOf(idx, altLimit = Int.MAX_VALUE, forceNet = true)
-        }
+        val r =
+            resolveSlots.withPermit {
+                resolveChainOf(idx, altLimit = Int.MAX_VALUE, forceNet = true)
+            }
         if (r != null && r.first.isNotEmpty()) {
             finalVerdict[idx] = false
             resolved[idx] = r
         } else if (lastChance) {
             // 最终列表里也没可播首集：这才是真结论，卡片可以给失败提示了
             finalVerdict[idx] = true
-            com.dengying.player.player.PlaybackProbe.note("discover-give-up", "idx=$idx")
+            com.dengying.player.player.PlaybackProbe
+                .note("discover-give-up", "idx=$idx")
         }
     }
 
@@ -1429,24 +1562,45 @@ private fun DiscoverPane(
     // onBuffering，三端引擎都发同一事件；只记下标与布尔，不记地址。
     var engineBuffering by remember { mutableStateOf(false) }
     DisposableEffect(engine) {
-        val listener = object : com.dengying.player.player.PlayerListener {
-            override fun onReady(durationMs: Long) { engineBuffering = false }
-            override fun onPlaying() { engineBuffering = false }
-            override fun onPaused() { engineBuffering = false }
-            override fun onBuffering(active: Boolean) {
-                engineBuffering = active
-                com.dengying.player.player.PlaybackProbe.note(
-                    "discover-buffering", "idx=$playingIdx on=$active",
-                )
+        val listener =
+            object : com.dengying.player.player.PlayerListener {
+                override fun onReady(durationMs: Long) {
+                    engineBuffering = false
+                }
+
+                override fun onPlaying() {
+                    engineBuffering = false
+                }
+
+                override fun onPaused() {
+                    engineBuffering = false
+                }
+
+                override fun onBuffering(active: Boolean) {
+                    engineBuffering = active
+                    com.dengying.player.player.PlaybackProbe.note(
+                        "discover-buffering",
+                        "idx=$playingIdx on=$active",
+                    )
+                }
+
+                override fun onCompleted() {
+                    engineBuffering = false
+                }
+
+                override fun onError(
+                    kind: com.dengying.player.player.PlaybackErrorKind,
+                    code: Int,
+                    message: String,
+                ) {
+                    engineBuffering = false
+                }
+
+                override fun onVideoSize(
+                    width: Int,
+                    height: Int,
+                ) {}
             }
-            override fun onCompleted() { engineBuffering = false }
-            override fun onError(
-                kind: com.dengying.player.player.PlaybackErrorKind,
-                code: Int,
-                message: String,
-            ) { engineBuffering = false }
-            override fun onVideoSize(width: Int, height: Int) {}
-        }
         engine.addListener(listener)
         onDispose { engine.removeListener(listener) }
     }
@@ -1461,6 +1615,7 @@ private fun DiscoverPane(
     // 滚动中**绝不**启播下一张，否则一路滑过去会连续起播好几张。
     LaunchedEffect(feedKey, feed.isNotEmpty()) {
         if (feed.isEmpty()) return@LaunchedEffect
+
         fun visibleFraction(info: androidx.compose.foundation.lazy.LazyListItemInfo): Float {
             val li = listState.layoutInfo
             val top = maxOf(info.offset, li.viewportStartOffset)
@@ -1493,7 +1648,9 @@ private fun DiscoverPane(
     LaunchedEffect(feedKey, feed.isNotEmpty()) {
         if (feed.isEmpty()) return@LaunchedEffect
         snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            listState.layoutInfo.visibleItemsInfo
+                .lastOrNull()
+                ?.index ?: 0
         }.collect { last ->
             if (last >= feed.size - 4) {
                 appendBatch()
@@ -1517,9 +1674,10 @@ private fun DiscoverPane(
             DiscoverSkeleton(topPadding, bottomPadding, sidePadding = sidePadding)
         } else {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = topPadding),
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(top = topPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
@@ -1550,17 +1708,19 @@ private fun DiscoverPane(
                 val hit = resolved[idx]
                 // 残帧门：本片还没装进引擎（解析中/失败/卡住）时不挂 PlayerView，
                 // 旧视图销毁 → 上一集最后一帧不残留，只显示海报。
-                val mediaReady = playingIdx == idx && startedIdx == idx &&
-                    hit != null && hit.first.isNotEmpty()
+                val mediaReady =
+                    playingIdx == idx && startedIdx == idx &&
+                        hit != null && hit.first.isNotEmpty()
                 // 失败态要等重试用尽才成立：重试期间按「还在加载」处理，
                 // 避免真机能播的片先被贴一张「这部暂时看不了」。
                 // 重试用尽也只是必要条件——还得等「全部源跑完」的最终结论
                 // （finalVerdict，DVP §10），否则慢源还没回来就先判了死刑。
-                val failedNow = DiscoverPlaybackRules.finalFailure(
-                    emptyUrl = playingIdx == idx && hit != null && hit.first.isEmpty(),
-                    attempts = retryCount[idx] ?: 0,
-                    allSourcesDone = finalVerdict[idx] == true,
-                )
+                val failedNow =
+                    DiscoverPlaybackRules.finalFailure(
+                        emptyUrl = playingIdx == idx && hit != null && hit.first.isEmpty(),
+                        attempts = retryCount[idx] ?: 0,
+                        allSourcesDone = finalVerdict[idx] == true,
+                    )
                 DiscoverVideoCard(
                     item = item,
                     isCenter = playingIdx == idx,
@@ -1571,8 +1731,9 @@ private fun DiscoverPane(
                     onOpenDetail = onOpenDetail,
                     mediaReady = mediaReady,
                     // 重试等待期间也算「加载中」，转圈别断，用户才不会以为卡死。
-                    buffering = playingIdx == idx && mediaReady && engineBuffering ||
-                        (playingIdx == idx && hit != null && hit.first.isEmpty() && !failedNow),
+                    buffering =
+                        playingIdx == idx && mediaReady && engineBuffering ||
+                            (playingIdx == idx && hit != null && hit.first.isEmpty() && !failedNow),
                 )
             }
         }
@@ -1616,99 +1777,106 @@ private fun DiscoverVideoCard(
                 // 【onOpenDetail 收的是完整路由串】（NavGraph 直接 nav.navigate）——
                 // 传裸 ID 会崩（Navigation destination cannot be found）。
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .onGloballyPositioned { playerBounds = it.boundsInWindow() }
-                        .clickable {
-                            // 详情页会先读进程级 detailCache。发现页已拿到完整 VideoItem，
-                            // 这里同步注入，避免「视频已经看到了还要再转一圈正在获取详情」。
-                            //
-                            // 【只补不用覆盖】卡片上的 item 是**发现页的简化条目**：
-                            // 它通常只带一条线路，有时连 vod_uri 都没有。若在这里无条件
-                            // put，会把 discoverRawUrl 已经缓存的完整详情（全部线路）冲掉，
-                            // 详情页上线后就会出现「播放源只有一个」。
-                            val source = item._source ?: ""
-                            val deps = com.dengying.player.ui.UiDepsHolder.get()
-                            val cacheKey = com.dengying.player.ui.UiDeps.detailCacheKey(source, item.vod_id)
-                            val cachedDetail = deps.detailCache.get(cacheKey)
-                            if (cachedDetail == null) deps.detailCache.put(cacheKey, item)
-                            // 【平滑交接】已装进预览引擎的片才带当前位置进详情，
-                            // 解析中/失败的卡不带，详情页按自身逻辑处理。
-                            // 【引擎为准，不信状态位】`mediaReady` 是 UI 侧复合条件
-                            // （playingIdx+startedIdx+resolved 三者同时成立）；真机上
-                            // 出现过引擎明明装着这条流、`mediaReady` 仍为 false 的情况
-                            // （探针 [handoff-gate] ready=false urlLen=46 pos=0），
-                            // 于是详情页判定「没有交接」→ 冷启 setMedia 把**正在播的
-                            // 同一个引擎**重装一遍：画面黑一下、进度归零、控件失效。
-                            // 引擎里装着这张卡（中心卡 + currentUrl 非空）就必须交接。
-                            val engineHoldsCard = isCenter && !engine.currentUrl.isNullOrEmpty()
-                            val startAtMs = DiscoverPlaybackRules.handoffStartAtMs(
-                                mediaReady || engineHoldsCard, engine.currentPosition,
-                            )
-                            if (startAtMs < 0L) DiscoverHero.clear()
-                            com.dengying.player.player.PlaybackProbe.note(
-                                "handoff-gate",
-                                "ready=$mediaReady urlLen=${engine.currentUrl?.length ?: -1} pos=${engine.currentPosition} " +
-                                    "start=$startAtMs sess=${com.dengying.player.playback.PlaybackSession.engineOrNull()?.hashCode()}",
-                            )
-                            // 【画面平移】只有「这张卡正在播」才交接几何：
-                            // 详情页会把画面从卡片矩形动画到自己的播放位，
-                            // 中途不重载媒体，视觉上是同一块画面在移动。
-                            playerBounds?.let { r ->
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                            .onGloballyPositioned { playerBounds = it.boundsInWindow() }
+                            .clickable {
+                                // 详情页会先读进程级 detailCache。发现页已拿到完整 VideoItem，
+                                // 这里同步注入，避免「视频已经看到了还要再转一圈正在获取详情」。
+                                //
+                                // 【只补不用覆盖】卡片上的 item 是**发现页的简化条目**：
+                                // 它通常只带一条线路，有时连 vod_uri 都没有。若在这里无条件
+                                // put，会把 discoverRawUrl 已经缓存的完整详情（全部线路）冲掉，
+                                // 详情页上线后就会出现「播放源只有一个」。
+                                val source = item._source ?: ""
+                                val deps =
+                                    com.dengying.player.ui.UiDepsHolder
+                                        .get()
+                                val cacheKey =
+                                    com.dengying.player.ui.UiDeps
+                                        .detailCacheKey(source, item.vod_id)
+                                val cachedDetail = deps.detailCache.get(cacheKey)
+                                if (cachedDetail == null) deps.detailCache.put(cacheKey, item)
+                                // 【平滑交接】已装进预览引擎的片才带当前位置进详情，
+                                // 解析中/失败的卡不带，详情页按自身逻辑处理。
+                                // 【引擎为准，不信状态位】`mediaReady` 是 UI 侧复合条件
+                                // （playingIdx+startedIdx+resolved 三者同时成立）；真机上
+                                // 出现过引擎明明装着这条流、`mediaReady` 仍为 false 的情况
+                                // （探针 [handoff-gate] ready=false urlLen=46 pos=0），
+                                // 于是详情页判定「没有交接」→ 冷启 setMedia 把**正在播的
+                                // 同一个引擎**重装一遍：画面黑一下、进度归零、控件失效。
+                                // 引擎里装着这张卡（中心卡 + currentUrl 非空）就必须交接。
+                                val engineHoldsCard = isCenter && !engine.currentUrl.isNullOrEmpty()
+                                val startAtMs =
+                                    DiscoverPlaybackRules.handoffStartAtMs(
+                                        mediaReady || engineHoldsCard,
+                                        engine.currentPosition,
+                                    )
+                                if (startAtMs < 0L) DiscoverHero.clear()
+                                com.dengying.player.player.PlaybackProbe.note(
+                                    "handoff-gate",
+                                    "ready=$mediaReady urlLen=${engine.currentUrl?.length ?: -1} pos=${engine.currentPosition} " +
+                                        "start=$startAtMs sess=${com.dengying.player.playback.PlaybackSession.engineOrNull()?.hashCode()}",
+                                )
+                                // 【画面平移】只有「这张卡正在播」才交接几何：
+                                // 详情页会把画面从卡片矩形动画到自己的播放位，
+                                // 中途不重载媒体，视觉上是同一块画面在移动。
+                                playerBounds?.let { r ->
+                                    if (startAtMs >= 0L) {
+                                        DiscoverHero.record(
+                                            left = r.left.toInt(),
+                                            top = r.top.toInt(),
+                                            width = r.width.toInt(),
+                                            height = r.height.toInt(),
+                                        )
+                                    }
+                                }
+                                // 【地址交接】把预览引擎正在播的这条地址一起交过去：
+                                // 详情页直接当首集预解析结果，起播时接管同一引擎，
+                                // 不解链、不重建 MediaSource —— 这是画面能连续平移的前提。
                                 if (startAtMs >= 0L) {
-                                    DiscoverHero.record(
-                                        left = r.left.toInt(),
-                                        top = r.top.toInt(),
-                                        width = r.width.toInt(),
-                                        height = r.height.toInt(),
+                                    DiscoverHandoff.record(
+                                        DiscoverHandoff.Payload(
+                                            url = engine.currentUrl.orEmpty(),
+                                            // 引擎不对外暴露请求头；此处交接的是
+                                            // 「已经装进引擎的同一条流」，接管后不会
+                                            // 再发请求，头部留空不影响播放。
+                                            headers = "",
+                                            positionMs = engine.currentPosition,
+                                            vodId = item.vod_id,
+                                            source = source,
+                                        ),
                                     )
                                 }
-                            }
-                            // 【地址交接】把预览引擎正在播的这条地址一起交过去：
-                            // 详情页直接当首集预解析结果，起播时接管同一引擎，
-                            // 不解链、不重建 MediaSource —— 这是画面能连续平移的前提。
-                            if (startAtMs >= 0L) {
-                                DiscoverHandoff.record(
-                                    DiscoverHandoff.Payload(
-                                        url = engine.currentUrl.orEmpty(),
-                                        // 引擎不对外暴露请求头；此处交接的是
-                                        // 「已经装进引擎的同一条流」，接管后不会
-                                        // 再发请求，头部留空不影响播放。
-                                        headers = "",
-                                        positionMs = engine.currentPosition,
+                                // 【交接窗口】点卡的同一帧起，发现页这一侧的 surface 很快就会
+                                // 撤掉（离开页面 / Dock 切换），而详情页的内嵌表面要几帧之后
+                                // 才挂上。旧实现在这段空窗里按「表面归零就暂停」把预览引擎
+                                // 掐了，详情页只能重新 setMedia → 用户看到黑屏、重新缓冲。
+                                // 置位后壳层只停主引擎、保住预览引擎；详情页挂上表面或判定
+                                // 交接失败时清除（见 DetailViewModel.attachInlineSurface）。
+                                if (startAtMs >= 0L && !engine.currentUrl.isNullOrEmpty()) {
+                                    deps.engineHost.setHandoffInProgress(true)
+                                }
+                                onOpenDetail(
+                                    com.dengying.player.ui.navigation.Routes.detail(
                                         vodId = item.vod_id,
                                         source = source,
+                                        name = item.vod_name ?: "",
+                                        pic = item.vod_pic ?: "",
+                                        // vodUri 优先取卡片条目的；卡片没有就退到缓存里
+                                        // 那份完整详情的——它是解析线路的必需参数，
+                                        // 传空会让详情页一条线路都解析不出来。
+                                        vodUri = item.vod_uri ?: cachedDetail?.vod_uri ?: "",
+                                        // resumeEpisode = 0：发现页看到的就是第 1 集，
+                                        // -1 会让 ResumeDecide 判「不自动播」（详情停在空态）。
+                                        resumeEpisode = 0,
+                                        autoPlay = true,
+                                        startAtMs = startAtMs,
                                     ),
                                 )
-                            }
-                            // 【交接窗口】点卡的同一帧起，发现页这一侧的 surface 很快就会
-                            // 撤掉（离开页面 / Dock 切换），而详情页的内嵌表面要几帧之后
-                            // 才挂上。旧实现在这段空窗里按「表面归零就暂停」把预览引擎
-                            // 掐了，详情页只能重新 setMedia → 用户看到黑屏、重新缓冲。
-                            // 置位后壳层只停主引擎、保住预览引擎；详情页挂上表面或判定
-                            // 交接失败时清除（见 DetailViewModel.attachInlineSurface）。
-                            if (startAtMs >= 0L && !engine.currentUrl.isNullOrEmpty()) {
-                                deps.engineHost.setHandoffInProgress(true)
-                            }
-                            onOpenDetail(
-                                com.dengying.player.ui.navigation.Routes.detail(
-                                    vodId = item.vod_id,
-                                    source = source,
-                                    name = item.vod_name ?: "",
-                                    pic = item.vod_pic ?: "",
-                                    // vodUri 优先取卡片条目的；卡片没有就退到缓存里
-                                    // 那份完整详情的——它是解析线路的必需参数，
-                                    // 传空会让详情页一条线路都解析不出来。
-                                    vodUri = item.vod_uri ?: cachedDetail?.vod_uri ?: "",
-                                    // resumeEpisode = 0：发现页看到的就是第 1 集，
-                                    // -1 会让 ResumeDecide 判「不自动播」（详情停在空态）。
-                                    resumeEpisode = 0,
-                                    autoPlay = true,
-                                    startAtMs = startAtMs,
-                                )
-                            )
-                        },
+                            },
                 ) {
                     if (DiscoverPlaybackRules.showPoster(isCenter, mediaReady)) {
                         com.dengying.player.ui.components.Poster(
@@ -1734,10 +1902,11 @@ private fun DiscoverVideoCard(
                         // 圆环几何中心偏移，视觉上「整个组件在绕圈」而非笔刷转。
                         // 暗底保证浅色海报上也看得见。
                         Box(
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .background(Color.Black.copy(alpha = 0.45f), CircleShape)
-                                .padding(8.dp),
+                            modifier =
+                                Modifier
+                                    .align(Alignment.Center)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
+                                    .padding(8.dp),
                         ) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(20.dp),
@@ -1751,13 +1920,14 @@ private fun DiscoverVideoCard(
                             text = "这部暂时看不了 · 下拉换一批",
                             style = MaterialTheme.typography.labelMedium,
                             color = androidx.compose.ui.graphics.Color.White,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .background(
-                                    androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
-                                    RoundedCornerShape(14.dp),
-                                )
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            modifier =
+                                Modifier
+                                    .align(Alignment.Center)
+                                    .background(
+                                        androidx.compose.ui.graphics.Color.Black
+                                            .copy(alpha = 0.55f),
+                                        RoundedCornerShape(14.dp),
+                                    ).padding(horizontal = 12.dp, vertical = 6.dp),
                         )
                     }
                     // 试看链：点进详情可换全片源（交叉信息，不吓退）
@@ -1766,14 +1936,15 @@ private fun DiscoverVideoCard(
                             text = "试看 · 详情页可看全片",
                             style = MaterialTheme.typography.labelMedium,
                             color = androidx.compose.ui.graphics.Color.White,
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(10.dp)
-                                .background(
-                                    androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
-                                    RoundedCornerShape(12.dp),
-                                )
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            modifier =
+                                Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(10.dp)
+                                    .background(
+                                        androidx.compose.ui.graphics.Color.Black
+                                            .copy(alpha = 0.55f),
+                                        RoundedCornerShape(12.dp),
+                                    ).padding(horizontal = 10.dp, vertical = 5.dp),
                         )
                     }
                 }
@@ -1787,13 +1958,14 @@ private fun DiscoverVideoCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = buildString {
-                            listOfNotNull(item.vod_year, item.type_name).joinToString(" · ").ifBlank { null }?.let {
-                                append(it)
-                                append("  ")
-                            }
-                            append("轻触观看完整影片 ›")
-                        },
+                        text =
+                            buildString {
+                                listOfNotNull(item.vod_year, item.type_name).joinToString(" · ").ifBlank { null }?.let {
+                                    append(it)
+                                    append("  ")
+                                }
+                                append("轻触观看完整影片 ›")
+                            },
                         style = MaterialTheme.typography.labelSmall,
                         color = Palette.TextSecondary,
                         maxLines = 1,
@@ -1816,37 +1988,48 @@ private suspend fun discoverRawUrl(
 ): String {
     val key = item._source ?: return ""
     val src = CmsSources.byKey(key) ?: return ""
-    val detail = runCatching {
-        // detailCache 由 IndexViewModel.prefetchDetails 预热；命中即省掉 1.2–2.6s
-        // 建连（真机实测）。未命中才打详情请求并写回，与预取同一键。
-        // forceNet：重试路径必须绕过缓存——缓存里那份可能就是「线路为空」的
-        // 那次失败结果，照着它重试只会得到同样结论。
-        val key2 = com.dengying.player.ui.UiDeps.detailCacheKey(key, item.vod_id)
-        (if (forceNet) null else deps.detailCache.get(key2)) ?: runCatching {
-            deps.sources.fetchDetail(src, item.vod_id, item.vod_uri ?: "")
-        }.getOrNull()?.also { deps.detailCache.put(key2, it) }
-    }.getOrNull() ?: return ""
+    val detail =
+        runCatching {
+            // detailCache 由 IndexViewModel.prefetchDetails 预热；命中即省掉 1.2–2.6s
+            // 建连（真机实测）。未命中才打详情请求并写回，与预取同一键。
+            // forceNet：重试路径必须绕过缓存——缓存里那份可能就是「线路为空」的
+            // 那次失败结果，照着它重试只会得到同样结论。
+            val key2 =
+                com.dengying.player.ui.UiDeps
+                    .detailCacheKey(key, item.vod_id)
+            (if (forceNet) null else deps.detailCache.get(key2)) ?: runCatching {
+                deps.sources.fetchDetail(src, item.vod_id, item.vod_uri ?: "")
+            }.getOrNull()?.also { deps.detailCache.put(key2, it) }
+        }.getOrNull() ?: return ""
     // 【默认线路】第一条线路不保证是正片（部分源把预告/花絮排前面，或先给一条
     // 只有几集的试看线）。与详情页同一口径：优先非预告、集数最多的线路，
     // 再取该线路第一集；手动选线与此无关（发现页没有选线 UI）。
-    val lines = runCatching {
-        com.dengying.player.core.parsePlayLines(detail.vod_play_from, detail.vod_play_url)
-    }.getOrElse { emptyList() }
-    val picked = lines
-        .getOrNull(com.dengying.player.core.chooseDefaultLineIndex(lines))
-        ?.episodes?.firstOrNull()?.url
-        ?.takeIf { it.isNotBlank() && it.contains("://") }
+    val lines =
+        runCatching {
+            com.dengying.player.core
+                .parsePlayLines(detail.vod_play_from, detail.vod_play_url)
+        }.getOrElse { emptyList() }
+    val picked =
+        lines
+            .getOrNull(
+                com.dengying.player.core
+                    .chooseDefaultLineIndex(lines),
+            )?.episodes
+            ?.firstOrNull()
+            ?.url
+            ?.takeIf { it.isNotBlank() && it.contains("://") }
     if (picked != null) return picked
     // 解析不出线路（协议变体）：退回旧口径——第一条线路的第一集，并留探针，
     // 免得这种源静默走老路没人发现。
-    val fallback = detail.vod_play_url
-        ?.split("$$$")
-        ?.firstOrNull()
-        ?.split("#")
-        ?.firstOrNull()
-        ?.substringAfter('$')
-        ?.takeIf { it.isNotBlank() && it.contains("://") }
-        ?: ""
+    val fallback =
+        detail.vod_play_url
+            ?.split("$$$")
+            ?.firstOrNull()
+            ?.split("#")
+            ?.firstOrNull()
+            ?.substringAfter('$')
+            ?.takeIf { it.isNotBlank() && it.contains("://") }
+            ?: ""
     if (fallback.isNotEmpty()) {
         com.dengying.player.player.PlaybackProbe.note(
             "line-fallback",

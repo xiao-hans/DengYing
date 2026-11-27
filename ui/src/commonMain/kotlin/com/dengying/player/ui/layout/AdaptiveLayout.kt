@@ -6,10 +6,10 @@ package com.dengying.player.ui.layout
  *
  * 为什么不用 `WindowSizeClass`：当前 CPF 毕昇线（CMP 1.9.2-1.2.0）没有
  * `material3-window-size-class`，`material3-adaptive` / `androidx.window` 也不在
- * 类路径上。新增依赖会同时影响三端，而这里只需要按窗口宽度分档。
+ * 类路径上。新增依赖会同时影响三端，而这里只需要按窗口尺寸分档。
  *
- * 为什么详情双栏要同时看短边：横屏手机的宽度也能过 840dp
- * （例如 915×412dp），只按宽度分档会把手机当平板。
+ * 分档只看窗口宽度，横屏与竖屏共用同一套响应式布局；竖屏手机额外做两处
+ * 收口，不改横屏已经调好的间距（见 `feedSidePaddingDp`）。
  */
 internal enum class WidthClass { Compact, Medium, Expanded, Wide }
 
@@ -21,6 +21,8 @@ internal enum class WidthClass { Compact, Medium, Expanded, Wide }
  * @property feedColumns 首页热点的每行卡片数。
  * @property contentMaxDp 普通内容限宽；无穷大表示不限制。
  * @property sidePaddingDp 普通内容的左右基础内边距。
+ * @property feedSidePaddingDp 首页内容区的左右内边距。窄屏为 0，让首页沿用
+ *   各区块自带的 14/18dp 内边距；宽屏再叠加窗口留白。
  * @property heroMaxDp 首页 Hero 限宽；无穷大表示不限制。
  * @property railCardDp 首页横滑 rail 卡宽度。
  * @property embeddedControlDp 内嵌播放器控制键边长。
@@ -37,6 +39,7 @@ internal data class AdaptiveSpec(
     val feedColumns: Int,
     val contentMaxDp: Float,
     val sidePaddingDp: Float,
+    val feedSidePaddingDp: Float,
     val heroMaxDp: Float,
     val railCardDp: Float,
     val embeddedControlDp: Float,
@@ -50,6 +53,10 @@ internal data class AdaptiveSpec(
         const val BREAKPOINT_MEDIUM = 600f
         const val BREAKPOINT_EXPANDED = 840f
         const val BREAKPOINT_WIDE = 1200f
+        /** 竖屏手机宽度上限；超过它按平板处理，正常叠加窗口留白。 */
+        const val FEED_INSET_MIN_WIDTH_DP = 720f
+        /** 全屏/内嵌控件按短边判定平板形态，短边不到 720dp 一律按手机给尺寸。 */
+        const val CONTROL_LARGE_SIDE_DP = 720f
         const val LARGE_MIN_SIDE_DP = 600f
         const val MAX_FULLSCREEN_DP = 1280f
         const val DETAIL_TWO_PANE_MAX_DP = 1280f
@@ -77,6 +84,7 @@ internal data class AdaptiveSpec(
             feedColumns = COMPACT_FEED_COLUMNS,
             contentMaxDp = Float.POSITIVE_INFINITY,
             sidePaddingDp = 12f,
+            feedSidePaddingDp = 0f,
             heroMaxDp = Float.POSITIVE_INFINITY,
             railCardDp = 112f,
             embeddedControlDp = 34f,
@@ -95,8 +103,8 @@ internal data class AdaptiveSpec(
                 widthDp >= BREAKPOINT_MEDIUM -> WidthClass.Medium
                 else -> WidthClass.Compact
             }
-            val large = widthDp >= BREAKPOINT_EXPANDED &&
-                minOf(widthDp, heightDp) >= LARGE_MIN_SIDE_DP
+            val shortSideDp = minOf(widthDp, heightDp)
+            val large = widthDp >= BREAKPOINT_EXPANDED && shortSideDp >= LARGE_MIN_SIDE_DP
             val grid = when (widthClass) {
                 WidthClass.Compact -> COMPACT_GRID_COLUMNS
                 WidthClass.Medium -> 4
@@ -119,6 +127,9 @@ internal data class AdaptiveSpec(
                 WidthClass.Medium -> 24f
                 WidthClass.Expanded, WidthClass.Wide -> 32f
             }
+            // 竖屏手机保持首页自带内边距；横屏（heightDp < widthDp）沿用宽度分档。
+            val portraitPhone = heightDp > widthDp && widthDp < FEED_INSET_MIN_WIDTH_DP
+            val feedSidePaddingDp = if (portraitPhone) 0f else sidePaddingDp
             val heroMaxDp = when (widthClass) {
                 WidthClass.Compact -> Float.POSITIVE_INFINITY
                 WidthClass.Medium -> 720f
@@ -130,9 +141,11 @@ internal data class AdaptiveSpec(
                 WidthClass.Expanded -> 144f
                 WidthClass.Wide -> 160f
             }
-            val embeddedControlDp = if (widthClass == WidthClass.Compact) 34f else 44f
-            val fullscreenPrimaryDp = if (widthClass == WidthClass.Compact) 44f else 56f
-            val fullscreenSecondaryDp = if (widthClass == WidthClass.Compact) 40f else 48f
+            // 控件尺寸改看短边：横屏手机宽度能过 840dp，只看宽度会把按键从 44dp 放大到 56dp。
+            val largeControls = shortSideDp >= CONTROL_LARGE_SIDE_DP
+            val embeddedControlDp = if (largeControls) 44f else 34f
+            val fullscreenPrimaryDp = if (largeControls) 56f else 44f
+            val fullscreenSecondaryDp = if (largeControls) 48f else 40f
             return AdaptiveSpec(
                 widthDp = widthDp,
                 heightDp = heightDp,
@@ -142,6 +155,7 @@ internal data class AdaptiveSpec(
                 feedColumns = feed,
                 contentMaxDp = contentMaxDp,
                 sidePaddingDp = sidePaddingDp,
+                feedSidePaddingDp = feedSidePaddingDp,
                 heroMaxDp = heroMaxDp,
                 railCardDp = railCardDp,
                 embeddedControlDp = embeddedControlDp,
