@@ -946,7 +946,8 @@ class SourceRepository {
      * 跨源候选：其他源搜同名片，返回 (source, vodId, 名称) 列表。
      *
      * 用于自动换线：当前源分片不可达时，找别的源的同名资源。
-     * 按源速排序，跳过当前源本身。
+     * 按源速排序；结果**含**当前源本身（调用方自己剔），这样详情页能把当前源
+     * 一起渲染成选中态 chip，不必再造一枚假条目。
      *
      * @param onBatch 分批上屏：搜索过程中每凑够一批就回调一次（含 6s 预算到点时的
      *   快照），供界面边搜边显示。
@@ -957,6 +958,9 @@ class SourceRepository {
      */
     suspend fun findAltSources(
         sources: List<CmsSource>,
+        // 结果里保留当前源本身（详情页要用它渲染选中态 chip），过滤交给调用方；
+        // 这个参数只为保持调用方语义，暂不参与搜索。
+        @Suppress("UNUSED_PARAMETER")
         currentSourceKey: String,
         title: String,
         onBatch: ((List<AltCandidate>) -> Unit)? = null,
@@ -990,9 +994,27 @@ class SourceRepository {
             val result = runCatching { shared.await() }.getOrDefault(emptyList())
             if (result.isNotEmpty()) onBatch?.invoke(result)
             // 共享任务跑完全源时才会写缓存——有缓存才等于「最终列表已就绪」，
-            // 否则本调用方只拿到快照，最终结论得等那个任务自己补发（见 finishFinal）。
-            altSearchLock.withLock { altSearchCache[norm] }?.let { finishFinal(it) }
-            return result
+            // 否则本调用方只拿到快照。**不能只等缓存**：慢源可能一条候选都没补到，
+            // 那条路径不会写缓存，原实现会让第二个调用方永远收不到 final，
+            // 它的 altListFinal 永远为 false → 自动选源静默失效。
+            altSearchLock.withLock { altSearchCache[norm] }?.let {
+                finishFinal(it)
+                return it
+            }
+            val mine = CompletableDeferred<List<AltCandidate>>()
+            val waiter = altSearchLock.withLock {
+                altFinalWaiters[norm] ?: mine.also { altFinalWaiters[norm] = it }
+            }
+            val full = withTimeoutOrNull(PageBudget.ALT_SOURCES_BUDGET_MS * 2) { waiter.await() }
+            if (full == null) {
+                // 上限内没等到最终结论：按快照收尾，别让调用方无限等。
+                altSearchLock.withLock { if (altFinalWaiters[norm] === waiter) altFinalWaiters.remove(norm) }
+                finishFinal(result)
+                return result
+            }
+            if (full.isNotEmpty() && full.size != result.size) onBatch?.invoke(full)
+            finishFinal(full)
+            return full
         }
         return coroutineScope {
             val task = altScope.async {
@@ -1035,8 +1057,7 @@ class SourceRepository {
                 }
                 val enabled = sources
                     .filter {
-                        isSourceEnabled(it) && it.key != currentSourceKey &&
-                            it.caps.search && it.caps.detail
+                        isSourceEnabled(it) && it.caps.search && it.caps.detail
                     }
                     .sortedWith(compareBy<CmsSource> { it.tier }.thenBy { it.speed })
 

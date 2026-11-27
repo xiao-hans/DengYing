@@ -901,7 +901,9 @@ class PlayerViewModel(
         val vodName = params.vodName
         if (vodName.isNotEmpty() && params.source.isNotEmpty()) {
             state = state.copy(status = "正在寻找备用线路…")
+            // 候选列表含发起源自己，兜底换线要剔掉，否则会试回同一个源
             val alts = repo.findAltSources(repo.allSources(), params.source, vodName)
+                .filter { it.sourceKey != params.source }
             for (alt in alts) {
                 val src = CmsSources.byKey(alt.sourceKey) ?: continue
                 val u = repo.fetchAltPlayUrl(src, alt.vodId, state.curEpIndex)

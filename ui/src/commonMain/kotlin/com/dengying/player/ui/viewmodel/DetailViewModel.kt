@@ -7,10 +7,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.dengying.player.data.source.SourceRepository
-import com.dengying.player.data.store.Store
-import com.dengying.player.data.download.DownloadCenter
-import com.dengying.player.data.json.JsonX
 import com.dengying.player.core.CmsSources
 import com.dengying.player.core.Episode
 import com.dengying.player.core.FavoriteItem
@@ -20,25 +16,29 @@ import com.dengying.player.core.VideoItem
 import com.dengying.player.core.capsOf
 import com.dengying.player.core.chooseDefaultLineIndex
 import com.dengying.player.core.parsePlayLines
+import com.dengying.player.data.download.DownloadCenter
+import com.dengying.player.data.json.JsonX
+import com.dengying.player.data.source.SourceRepository
+import com.dengying.player.data.store.Store
 import com.dengying.player.domain.playback.HistoryWritePolicy
 import com.dengying.player.domain.playback.ResumeDecide
 import com.dengying.player.domain.search.SearchNotice
-import com.dengying.player.player.PlayerEngineHost
 import com.dengying.player.platform.Clock
 import com.dengying.player.platform.Log
 import com.dengying.player.platform.ioDispatcher
 import com.dengying.player.player.PlaybackProbe
+import com.dengying.player.player.PlayerEngineHost
+import com.dengying.player.ui.UiDeps
+import com.dengying.player.ui.navigation.Routes
+import com.dengying.player.ui.pages.DiscoverHandoff
+import com.dengying.player.ui.pages.DiscoverPlaybackRules
+import com.dengying.player.ui.prefs.PlaybackPrefs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
-import com.dengying.player.ui.UiDeps
-import com.dengying.player.ui.navigation.Routes
-import com.dengying.player.ui.pages.DiscoverHandoff
-import com.dengying.player.ui.pages.DiscoverPlaybackRules
-import com.dengying.player.ui.prefs.PlaybackPrefs
 
 /**
  * 一条跨源候选（FR-417 换源）。
@@ -93,7 +93,6 @@ class DetailViewModel(
     private val liveUrl: String = "",
     private val liveHeaders: String = "",
 ) : ViewModel() {
-
     data class UiState(
         /** 当前详情所指向的源 key；换源后同步更新，供“播放源”选中态回显。 */
         val sourceKey: String = "",
@@ -176,9 +175,12 @@ class DetailViewModel(
 
     // FR-711 纯屏幕形态：true = 内嵌位铺满全屏。只表示**屏幕形态**，不表示播放状态
     // ——会话、引擎、进度一概不动。状态机独立成类的原因见 [ScreenFullscreenState]。
-    private val screenFullscreen = ScreenFullscreenState {
-        com.dengying.player.playback.PlaybackSession.currentState().hasSession
-    }
+    private val screenFullscreen =
+        ScreenFullscreenState {
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
+                .hasSession
+        }
 
     /** 内嵌位当前是否处于全屏形态（FR-711）。 */
     val screenOnlyFullscreen: Boolean get() = screenFullscreen.active
@@ -260,7 +262,9 @@ class DetailViewModel(
                 live = true,
             )
             enterScreenFullscreen()
-        } else loadDetail()
+        } else {
+            loadDetail()
+        }
         viewModelScope.launch {
             while (true) {
                 refreshDownloadsNow()
@@ -298,29 +302,37 @@ class DetailViewModel(
                         adoptedFromDiscovery = adoptedFromDiscovery,
                         displayEngineActive = displayEngineActive,
                     )
-                ) return@collect
-                inlineState = inlineState.copy(
-                    active = true,
-                    title = if (playingEp >= 0) s.title else inlineState.title,
-                    episodeName = if (playingEp >= 0) s.episodeName else inlineState.episodeName,
-                    episodeIndex = if (playingEp >= 0) s.episodeIndex else inlineState.episodeIndex,
-                    live = if (playingEp >= 0) s.live else inlineState.live,
-                    isPlaying = playingEp >= 0 && s.status == com.dengying.player.playback.PlaybackSession.Status.Playing,
-                    curTime = if (playingEp >= 0) s.curTime else inlineState.curTime,
-                    totalTime = if (playingEp >= 0) s.totalTime else inlineState.totalTime,
-                    buffering = playingEp >= 0 && s.buffering,
-                    status = if (playingEp >= 0) when (s.status) {
-                        com.dengying.player.playback.PlaybackSession.Status.Resolving -> "正在解析播放地址…"
-                        com.dengying.player.playback.PlaybackSession.Status.Buffering -> "正在缓冲…"
-                        else -> ""
-                    } else "",
-                    errMsg = if (playingEp >= 0) s.errMsg else "",
-                )
+                ) {
+                    return@collect
+                }
+                inlineState =
+                    inlineState.copy(
+                        active = true,
+                        title = if (playingEp >= 0) s.title else inlineState.title,
+                        episodeName = if (playingEp >= 0) s.episodeName else inlineState.episodeName,
+                        episodeIndex = if (playingEp >= 0) s.episodeIndex else inlineState.episodeIndex,
+                        live = if (playingEp >= 0) s.live else inlineState.live,
+                        isPlaying = playingEp >= 0 && s.status == com.dengying.player.playback.PlaybackSession.Status.Playing,
+                        curTime = if (playingEp >= 0) s.curTime else inlineState.curTime,
+                        totalTime = if (playingEp >= 0) s.totalTime else inlineState.totalTime,
+                        buffering = playingEp >= 0 && s.buffering,
+                        status =
+                            if (playingEp >= 0) {
+                                when (s.status) {
+                                    com.dengying.player.playback.PlaybackSession.Status.Resolving -> "正在解析播放地址…"
+                                    com.dengying.player.playback.PlaybackSession.Status.Buffering -> "正在缓冲…"
+                                    else -> ""
+                                }
+                            } else {
+                                ""
+                            },
+                        errMsg = if (playingEp >= 0) s.errMsg else "",
+                    )
             }
         }
     }
 
-    fun loadDetail() {
+    fun loadDetail(refetchAlts: Boolean = true) {
         // 过期响应守卫：换源会再调一次本函数，旧协程可能在之后才返回，
         // 若不认账就会把**上一部片**的详情写到新源的状态上。
         val seq = ++detailSeq
@@ -342,11 +354,16 @@ class DetailViewModel(
                 // 能力位前置判定：只支持搜索的源必须明确提示「点不进去」，
                 // 不得发一次注定失败的请求后只报「加载失败」（FR-108/FR-309）
                 if (!capsOf(src).detail) {
-                    state = state.copy(
-                        errMsg = "${src.name} 仅支持搜索，未开放详情。请从其他源打开同一部片",
-                        loading = false,
-                    )
-                    viewModelScope.launch { loadAltSources() }
+                    state =
+                        state.copy(
+                            errMsg = "${src.name} 仅支持搜索，未开放详情。请从其他源打开同一部片",
+                            loading = false,
+                        )
+                    if (refetchAlts) {
+                        viewModelScope.launch { loadAltSources() }
+                    } else {
+                        PlaybackProbe.note("detail-sources-refetch", "skip=true")
+                    }
                     return@launch
                 }
 
@@ -373,25 +390,27 @@ class DetailViewModel(
                     // 有的源在缺 vod_uri 时甚至连线路都解析不出来。若网络结果比
                     // 缓存少，保留缓存的线路字段，否则详情页会从「10 条线路」
                     // 退化成「1 条」甚至空列表。
-                    val merged = if (
-                        item.vod_play_url.isNullOrBlank() &&
-                        !cached?.vod_play_url.isNullOrBlank()
-                    ) {
-                        PlaybackProbe.note("detail-merge-lines", "from=cache")
-                        item.copy(
-                            vod_play_url = cached?.vod_play_url,
-                            vod_play_from = cached?.vod_play_from ?: item.vod_play_from,
-                            vod_uri = item.vod_uri ?: cached?.vod_uri,
-                        )
-                    } else {
-                        item
-                    }
+                    val merged =
+                        if (
+                            item.vod_play_url.isNullOrBlank() &&
+                            !cached?.vod_play_url.isNullOrBlank()
+                        ) {
+                            PlaybackProbe.note("detail-merge-lines", "from=cache")
+                            item.copy(
+                                vod_play_url = cached?.vod_play_url,
+                                vod_play_from = cached?.vod_play_from ?: item.vod_play_from,
+                                vod_uri = item.vod_uri ?: cached?.vod_uri,
+                            )
+                        } else {
+                            item
+                        }
                     deps.detailCache.put(cacheKey, merged)
                     applyDetail(merged, seq)
                 } else if (cached == null) {
-                    state = state.copy(
-                        errMsg = "详情加载失败：${src.name} 无数据或请求失败，试试返回重进",
-                    )
+                    state =
+                        state.copy(
+                            errMsg = "详情加载失败：${src.name} 无数据或请求失败，试试返回重进",
+                        )
                 }
 
                 // 【收藏态/历史态：挪到内容显示之后，且两者并发】
@@ -423,7 +442,11 @@ class DetailViewModel(
             // 候选是「多给几个换线选项」的锦上添花，晚 1 秒无感；详情是用户正在等的那一屏。
             // 放在这里（try/catch 之后）而不是 try 内：详情失败时更该给出候选，
             // 那条路径同样要走到。
-            viewModelScope.launch { loadAltSources() }
+            if (refetchAlts) {
+                viewModelScope.launch { loadAltSources() }
+            } else {
+                PlaybackProbe.note("detail-sources-refetch", "skip=true")
+            }
 
             state = state.copy(loading = false)
             // FR-309：刷新剧集状态
@@ -439,17 +462,21 @@ class DetailViewModel(
      * **只要 item 到手就立刻写 state**，不再等收藏态/历史态那次本地 IO——
      * 界面据此从整屏转圈切到真实内容（DetailScreen 的 `when` 首分支就是 item != null）。
      */
-    private fun applyDetail(item: VideoItem, seq: Int) {
+    private fun applyDetail(
+        item: VideoItem,
+        seq: Int,
+    ) {
         if (seq != detailSeq) return
         val lines = parsePlayLines(item.vod_play_from ?: "", item.vod_play_url ?: "")
         // FR-316：默认选「集数最多」的正片线路，而不是固定第 0 条。部分源把
         // 预告/花絮或只有几集的试看线排在前面，固定 lineIdx=0 会一进页就点不开正片。
         // 用户手动选过线就尊重用户，网络刷新不得覆盖。
-        val picked = if (linePickedByUser) {
-            if (lines.isEmpty()) 0 else minOf(state.lineIdx, lines.size - 1)
-        } else {
-            chooseDefaultLineIndex(lines)
-        }
+        val picked =
+            if (linePickedByUser) {
+                if (lines.isEmpty()) 0 else minOf(state.lineIdx, lines.size - 1)
+            } else {
+                chooseDefaultLineIndex(lines)
+            }
         state = state.copy(item = item, lines = lines, lineIdx = picked, switchingTo = "")
         refreshEpState()
         if (!contentShown) {
@@ -486,10 +513,11 @@ class DetailViewModel(
      * 首集地址已就绪，调用方不要再起解析链。
      */
     private fun adoptDiscoverHandoff(): Boolean {
-        val h = DiscoverHandoff.take() ?: run {
-            PlaybackProbe.note("detail-handoff-miss", "empty")
-            return false
-        }
+        val h =
+            DiscoverHandoff.take() ?: run {
+                PlaybackProbe.note("detail-handoff-miss", "empty")
+                return false
+            }
         if (h.url.isBlank()) {
             PlaybackProbe.note("detail-handoff-miss", "url-blank")
             return false
@@ -528,8 +556,7 @@ class DetailViewModel(
     }
 
     /** 当前源是否声明了播放链缺口（非空 = 该源当前不可播，见 PlaybackSession 门禁） */
-    private fun currentSourceHasPlayGap(): Boolean =
-        !CmsSources.byKey(curSource)?.playGap.isNullOrEmpty()
+    private fun currentSourceHasPlayGap(): Boolean = !CmsSources.byKey(curSource)?.playGap.isNullOrEmpty()
 
     /**
      * 跨源候选（FR-417）—— 带缓存的搜索。
@@ -549,15 +576,24 @@ class DetailViewModel(
         // 第二层残留缓存，导致之后进同一部片也永远只看到几个快源。
         state = state.copy(altLoading = true)
         val expectedTitle = title
+        // 代际令牌：换源/重进详情会重新发一轮搜索，旧一轮的 onBatch/onFinal
+        // 可能迟到（共享任务不随页面取消），必须按代际丢弃，否则会把旧源的
+        // 集数写回新页面。
+        val mySeq = ++altSeq
         try {
             val t0 = Clock.nowMs()
+
             // 分批上屏：先到的源立即给用户可点的换线选项，不再等齐 12+ 源。
             // 每次回调都做标题守卫，避免切片/换源后旧片候选落到新详情页。
             //
             // [final] = 「全部源跑完」的最终列表（DVP §10）：允许空列表（跑完却零
             // 候选也是真结论），并把 [altListFinal] 打开——自动选源只认这个信号，
             // 不拿 6s 快照做判断。
-            fun applyAlts(alts: List<com.dengying.player.data.source.SourceRepository.AltCandidate>, final: Boolean) {
+            fun applyAlts(
+                alts: List<com.dengying.player.data.source.SourceRepository.AltCandidate>,
+                final: Boolean,
+            ) {
+                if (mySeq != altSeq) return
                 if (state.item?.vod_name != expectedTitle && curName != expectedTitle) return
                 // 逐批上屏时会整表替换：把已探测到的集数按 (源, vodId) 带过去，
                 // 否则第二批到来就把第一批的「全 24 集」清回 -1。
@@ -565,13 +601,17 @@ class DetailViewModel(
                 val mapped = ArrayList<AltItem>(alts.size)
                 for (a in alts) {
                     val s = CmsSources.byKey(a.sourceKey) ?: continue
-                    mapped += AltItem(
-                        sourceKey = a.sourceKey,
-                        sourceName = s.name,
-                        vodId = a.vodId,
-                        vodName = a.vodName,
-                        epCount = probed[a.sourceKey to a.vodId] ?: -1,
-                    )
+                    mapped +=
+                        AltItem(
+                            sourceKey = a.sourceKey,
+                            sourceName = s.name,
+                            vodId = a.vodId,
+                            vodName = a.vodName,
+                            // 当前源在本页已经有选集数据，别等候选探测再写一遍 -1
+                            epCount =
+                                probed[a.sourceKey to a.vodId]
+                                    ?: if (a.sourceKey == curSource) currentEpCount().takeIf { it > 0 } ?: -1 else -1,
+                        )
                 }
                 // 分批途中的空列表按「还没搜到」处理；最终列表的空是真结论
                 if (mapped.isEmpty() && !final) return
@@ -583,6 +623,10 @@ class DetailViewModel(
                 prefetchAltDetails(mapped)
                 if (final) {
                     altListFinal = true
+                    viewModelScope.launch { maybeAutoPickBestSource() }
+                } else if (pickPhase == PickPhase.None && mapped.any { it.epCount > 0 }) {
+                    // 早选：首批里已经有带集数的候选就先换，不等 14~22s 的全源结论；
+                    // 漏选/选到次优由最终阶段的唯一一次升级兜底。
                     viewModelScope.launch { maybeAutoPickBestSource() }
                 }
             }
@@ -597,10 +641,14 @@ class DetailViewModel(
                 viewModelScope.launch { applyAlts(alts, final = true) }
             }
 
-            val alts = repo.findAltSources(
-                repo.allSources(), curSource, title,
-                onBatch = ::onBatch, onFinal = ::onFinal,
-            )
+            val alts =
+                repo.findAltSources(
+                    repo.allSources(),
+                    curSource,
+                    title,
+                    onBatch = ::onBatch,
+                    onFinal = ::onFinal,
+                )
             onBatch(alts)
             com.dengying.player.player.PlaybackProbe.note(
                 "alt-sources-loaded",
@@ -610,7 +658,8 @@ class DetailViewModel(
         } catch (e: Exception) {
             // 候选失败不影响主详情
         }
-        state = state.copy(altLoading = false)
+        // 新一轮搜索已经开始时不要替它关 loading
+        if (mySeq == altSeq) state = state.copy(altLoading = false)
     }
 
     /**
@@ -625,10 +674,11 @@ class DetailViewModel(
      * （主详情被拖到 1~3s）。这里闸门 3 路，且排在主详情之后启动。
      */
     private fun prefetchAltDetails(alts: List<AltItem>) {
-        val targets = alts.filter {
-            it.epCount < 0 && it.sourceKey != curSource &&
-                CmsSources.byKey(it.sourceKey)?.let { s -> capsOf(s).detail } == true
-        }
+        val targets =
+            alts.filter {
+                it.epCount < 0 && it.sourceKey != curSource &&
+                    CmsSources.byKey(it.sourceKey)?.let { s -> capsOf(s).detail } == true
+            }
         if (targets.isEmpty()) return
         viewModelScope.launch {
             val gate = Semaphore(ALT_PREFETCH_CONCURRENCY)
@@ -642,21 +692,30 @@ class DetailViewModel(
         val src = CmsSources.byKey(a.sourceKey) ?: return
         val key = UiDeps.detailCacheKey(a.sourceKey, a.vodId)
         val cached = deps.detailCache.get(key)
-        val item = cached ?: runCatching {
-            kotlinx.coroutines.withTimeout(ALT_PREFETCH_TIMEOUT_MS) {
-                kotlinx.coroutines.withContext(ioDispatcher) { repo.fetchDetail(src, a.vodId, "") }
+        val item =
+            cached ?: runCatching {
+                kotlinx.coroutines.withTimeout(ALT_PREFETCH_TIMEOUT_MS) {
+                    kotlinx.coroutines.withContext(ioDispatcher) { repo.fetchDetail(src, a.vodId, "") }
+                }
+            }.getOrNull() ?: run {
+                PlaybackProbe.note("alt-prefetch-miss", "src=${a.sourceKey} reason=fetch")
+                return
             }
-        }.getOrNull() ?: return
         if (cached == null) deps.detailCache.put(key, item)
         val eps = maxEpisodesOf(item)
-        if (eps <= 0) return
+        if (eps <= 0) {
+            PlaybackProbe.note("alt-prefetch-miss", "src=${a.sourceKey} reason=no-episodes")
+            return
+        }
         // 页面已经换到别的片/别的源：只落缓存，不写这个页面的状态
         if (state.item?.vod_name != a.vodName && curName != a.vodName) return
-        state = state.copy(
-            altSources = state.altSources.map {
-                if (it.sourceKey == a.sourceKey && it.vodId == a.vodId) it.copy(epCount = eps) else it
-            },
-        )
+        state =
+            state.copy(
+                altSources =
+                    state.altSources.map {
+                        if (it.sourceKey == a.sourceKey && it.vodId == a.vodId) it.copy(epCount = eps) else it
+                    },
+            )
         PlaybackProbe.note("alt-prefetch", "src=${a.sourceKey} eps=$eps cached=${cached != null}")
         maybeAutoPickBestSource()
     }
@@ -680,27 +739,163 @@ class DetailViewModel(
      * 解析就换谁；失败过的源记进 [autoPickTried]，下一批候选不再重复试。
      */
     private suspend fun maybeAutoPickBestSource() {
-        if (linePickedByUser || autoPickedBestSource) return
-        // 【只在完整候选上判定】6s 预算的快照缺慢源，拿它当结论会漏掉更完整的
-        // 线路、也会把快源的临时失败当成整片失败（DVP §10）。
-        if (!altListFinal) return
+        if (sourcePickedByUser || linePickedByUser) return
+        if (autoPickedBestSource && pickPhase == PickPhase.Final) return
         // 【交接窗口内不换源】发现页打进详情的那条流还在被接管，此时换源等于
         // 把交接目标换掉——用户看到的是黑屏 + 重新缓冲。更好的源等窗口结束再换。
         if (handoffPending) return
-        val targets = rankedSwitchTargets(
-            currentKey = curSource,
-            currentEpCount = currentEpCount(),
-            currentHasGap = currentSourceHasPlayGap(),
-            candidates = state.altSources.map { SourceFacts(it.sourceKey, it.epCount) },
-        ).filterNot { it in autoPickTried }
+
+        if (pickPhase == PickPhase.None) {
+            pickFirstSource()
+            return
+        }
+        // 早选只在「最终列表」到达时复审一次：快照缺慢源，不能拿它证明早选错了。
+        if (!altListFinal) return
+        maybeUpgradePick()
+    }
+
+    private fun candidateFacts(): List<SourceFacts> = state.altSources.map { SourceFacts(it.sourceKey, it.epCount) }
+
+    /**
+     * 第一次自动选源。
+     *
+     * 首批候选就能先选：等全源跑完（14~22s）再换，用户已经看了一半残集。
+     * 代价是可能选到次优，由 [maybeUpgradePick] 在最终列表上补一次升级。
+     * 集数未知（-1）的候选不参与——[rankedSwitchTargets] 已把 <=0 过滤掉。
+     */
+    private suspend fun pickFirstSource() {
+        if (pickRunning) return
+        pickRunning = true
+        try {
+            pickFirstSourceLocked()
+        } finally {
+            pickRunning = false
+        }
+    }
+
+    private suspend fun pickFirstSourceLocked() {
+        // 进入时记代际：firstEpPlayable 会挂起几秒，期间别的回调可能已经换过源，
+        // 那时 curSource 已经变了，再用旧 targets 继续试就会连跳（蓝光4k → 暴风 → 量子）。
+        val seq = pickSeq
+        val hasGap = currentSourceHasPlayGap()
+        // 声明的 playGap 不一定对本片成立：真机出现过 蓝光4k → 暴风 → 瓜皮 →
+        // 量子 连跳三页，每一跳都用「源有缺口」否掉上一跳刚校验过能播的源。
+        // 先花一次解析确认当前源自己的首集能不能播；能播就不换。
+        if (hasGap && currentSourceActuallyPlayable()) return
+        val known =
+            rankedSwitchTargets(
+                currentKey = curSource,
+                currentEpCount = currentEpCount(),
+                currentHasGap = hasGap,
+                candidates = candidateFacts(),
+            ).filterNot { it in autoPickTried }
+        // playGap 源对本片必然播不了：已探测到集数的候选先试，全都不行时
+        // 再按源速顺序试「集数未知」的候选，否则候选详情集体超时会锁死在
+        // 不能播的源上（真机 `alt-prefetch` 一条都没有的场景）。
+        val targets =
+            if (hasGap) {
+                known +
+                    unprobedGapFallback(curSource, candidateFacts())
+                        .filterNot { it in autoPickTried }
+            } else {
+                known
+            }
         if (targets.isEmpty()) return
         for (k in targets.take(ALT_AUTO_PICK_TRIES)) {
             autoPickTried += k
-            if (linePickedByUser) return
+            if (seq != pickSeq || sourcePickedByUser || linePickedByUser) return
             val a = state.altSources.firstOrNull { it.sourceKey == k } ?: continue
             if (!firstEpPlayable(a)) continue
+            if (seq != pickSeq) return
+            pickPhase = if (altListFinal) PickPhase.Final else PickPhase.Early
+            autoPickedKey = k
+            autoPickedEps = a.epCount
             autoPickedBestSource = true
-            PlaybackProbe.note("detail-auto-pick", "from=$curSource to=$k eps=${a.epCount}")
+            PlaybackProbe.note(
+                "detail-auto-pick",
+                "from=$curSource to=$k eps=${a.epCount} phase=$pickPhase",
+            )
+            switchToSource(a, automatic = true)
+            return
+        }
+        // 一条都没换成功时留探针，避免下次只能靠猜（源名与试过的数量够定位）
+        if (altListFinal && hasGap) {
+            PlaybackProbe.note(
+                "detail-auto-pick",
+                "from=$curSource to=none gap=true tried=${autoPickTried.size}",
+            )
+        }
+    }
+
+    /**
+     * 当前源首集是否真能解析出地址（对 playGap 源的「声明 vs 实际」复核）。
+     *
+     * 每页只算一次：一次详情页生命周期内结论不会变，重复解析只会让自动选源
+     * 多花几秒。
+     */
+    private suspend fun currentSourceActuallyPlayable(): Boolean {
+        gapProbePlayable?.let { return it }
+        val name = CmsSources.byKey(curSource)?.name ?: curSource
+        val playable = firstEpPlayable(
+            AltItem(
+                sourceKey = curSource,
+                sourceName = name,
+                vodId = curVodId,
+                vodName = curName,
+                epCount = currentEpCount(),
+            ),
+        )
+        gapProbePlayable = playable
+        PlaybackProbe.note("detail-gap-probe", "src=$curSource playable=$playable")
+        return playable
+    }
+
+    /**
+     * 早选之后的唯一一次升级（FR-635）。
+     *
+     * 只认最终列表：早选时慢源还没回来，拿快照升级会在两个「差不多全」的源
+     * 之间来回跳。判定见 [shouldUpgradeAutoPick]。
+     */
+    private suspend fun maybeUpgradePick() {
+        if (autoPickUpgrades >= 1) return
+        if (pickRunning) return
+        pickRunning = true
+        try {
+            upgradePickLocked()
+        } finally {
+            pickRunning = false
+        }
+    }
+
+    private suspend fun upgradePickLocked() {
+        val seq = pickSeq
+        // 已起播就不再换台：用户正在看的东西不能被自动切走
+        val played = inlineEngine != null
+        val fromEps = maxOf(autoPickedEps, currentEpCount())
+        val targets =
+            state.altSources
+                .asSequence()
+                .filter {
+                    it.sourceKey != curSource && it.sourceKey != autoPickedKey &&
+                        it.epCount > 0 && it.sourceKey !in autoPickTried
+                }.filter { shouldUpgradeAutoPick(fromEps, it.epCount, played, sourcePickedByUser, autoPickUpgrades) }
+                .sortedByDescending { it.epCount }
+                .take(ALT_AUTO_PICK_TRIES)
+                .toList()
+        for (a in targets) {
+            autoPickTried += a.sourceKey
+            if (seq != pickSeq || sourcePickedByUser || linePickedByUser) return
+            if (!firstEpPlayable(a)) continue
+            if (seq != pickSeq) return
+            pickPhase = PickPhase.Final
+            autoPickUpgrades++
+            autoPickedKey = a.sourceKey
+            autoPickedEps = a.epCount
+            autoPickedBestSource = true
+            PlaybackProbe.note(
+                "detail-auto-upgrade",
+                "from=$curSource to=${a.sourceKey} eps=$fromEps->${a.epCount}",
+            )
             switchToSource(a, automatic = true)
             return
         }
@@ -711,7 +906,10 @@ class DetailViewModel(
         val s = CmsSources.byKey(a.sourceKey) ?: return false
         return runCatching {
             val u = kotlinx.coroutines.withContext(ioDispatcher) { repo.fetchAltPlayUrl(s, a.vodId, 0) }
-            u.isNotEmpty() && com.dengying.player.data.net.HlsUtil.resolvePlayUrlOrFail(u).resolved
+            u.isNotEmpty() &&
+                com.dengying.player.data.net.HlsUtil
+                    .resolvePlayUrlOrFail(u)
+                    .resolved
         }.getOrDefault(false)
     }
 
@@ -727,19 +925,24 @@ class DetailViewModel(
      * 目标源详情若已在 [UiDeps.detailCache]（候选预拉过），[loadDetail] 会
      * 同步命中缓存，用户感知就是点一下直接换好。
      */
-    fun switchToSource(target: AltItem, automatic: Boolean = false) {
+    fun switchToSource(
+        target: AltItem,
+        automatic: Boolean = false,
+    ) {
         if (!automatic) {
-            // 用户手动换源：清掉自动状态，后续不再自动跳
+            // 用户手动换源：之后一律不再自动选源/升级，用户的选择优先
+            sourcePickedByUser = true
+            autoPickedBestSource = true
             linePickedByUser = false
-            autoPickedBestSource = false
-            autoPickTried.clear()
         }
+        // 旧源上正在跑的选源循环作废，否则它醒过来会接着旧 targets 再跳一次
+        pickSeq++
         // 旧源的预解析结果作废
         preResolveSeq++
         preResolved = null
         preResolving = false
-        // 新源要重新搜一轮候选，「完整列表」信号必须跟着作废
-        altListFinal = false
+        // 候选列表按片名跨源共享：换源不重搜（见 loadDetail(refetchAlts)），
+        // 所以 [altListFinal] 保持有效，chip 不会在换源后短暂消失。
         curSource = target.sourceKey
         curVodId = target.vodId
         curName = target.vodName
@@ -747,18 +950,19 @@ class DetailViewModel(
         resumeEp = -1
         // 同名片才保留旧信息：不同片（跨源同名搜到别的条目）宁可显示骨架，也不能让人看着上一部的海报
         val keepItem = state.item?.takeIf { it.vod_name == target.vodName }
-        state = state.copy(
-            sourceKey = target.sourceKey,
-            item = keepItem,
-            lines = emptyList(),
-            lineIdx = 0,
-            loading = keepItem == null,
-            errMsg = "",
-            epNotice = "",
-            resumeNotice = "",
-            switchingTo = CmsSources.byKey(target.sourceKey)?.name ?: target.sourceKey,
-        )
-        loadDetail()
+        state =
+            state.copy(
+                sourceKey = target.sourceKey,
+                item = keepItem,
+                lines = emptyList(),
+                lineIdx = 0,
+                loading = keepItem == null,
+                errMsg = "",
+                epNotice = "",
+                resumeNotice = "",
+                switchingTo = CmsSources.byKey(target.sourceKey)?.name ?: target.sourceKey,
+            )
+        loadDetail(refetchAlts = false)
     }
 
     /**
@@ -768,14 +972,15 @@ class DetailViewModel(
      */
     fun onToggleFav() {
         val it = state.item
-        val fav = FavoriteItem(
-            vod_id = curVodId,
-            vod_name = it?.vod_name ?: curName,
-            vod_pic = it?.vod_pic ?: curPic,
-            source = curSource,
-            vod_uri = curVodUri,
-            addTime = Clock.nowMs(),
-        )
+        val fav =
+            FavoriteItem(
+                vod_id = curVodId,
+                vod_name = it?.vod_name ?: curName,
+                vod_pic = it?.vod_pic ?: curPic,
+                source = curSource,
+                vod_uri = curVodUri,
+                addTime = Clock.nowMs(),
+            )
         val wasFav = state.faved
         viewModelScope.launch {
             if (store.toggleFavorite(fav)) {
@@ -934,10 +1139,11 @@ class DetailViewModel(
      * [playInline] 明确建立本片会话后再显示播放器。
      */
     private val canShowSessionEngine: Boolean
-        get() = adoptedFromDiscovery ||
-            com.dengying.player.playback.PlaybackSession.currentState().let { state ->
-                state.hasSession && state.vodId == curVodId && state.source == curSource
-            }
+        get() =
+            adoptedFromDiscovery ||
+                com.dengying.player.playback.PlaybackSession.currentState().let { state ->
+                    state.hasSession && state.vodId == curVodId && state.source == curSource
+                }
 
     /**
      * 【视图宿主绑定】把会话的引擎接到本页内嵌位（FR-711）。
@@ -949,9 +1155,13 @@ class DetailViewModel(
      * 由 UI 在组合期间调用（见 `DisposableEffect`）；会话空闲时是 no-op。
      */
     fun attachInlineSurface() {
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
-        val sessionEngine = com.dengying.player.playback.PlaybackSession.engineOrNull()
-            ?.takeIf { canShowSessionEngine }
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
+        val sessionEngine =
+            com.dengying.player.playback.PlaybackSession
+                .engineOrNull()
+                ?.takeIf { canShowSessionEngine }
         // 【交接窗口先显示发现页那台引擎】用户要的效果是「视频平移进内嵌位」：
         // 会话此刻还没建立（playInline 要等选集/点击流程），若这里直接早退，
         // 内嵌位会先画一帧「选择下方剧集开始播放」的空态占位，再被视频顶掉
@@ -968,14 +1178,15 @@ class DetailViewModel(
             if (display !== previewDisplayEngine) {
                 previewDisplayEngine = display
                 displayEngineActive = true
-                inlineState = inlineState.copy(
-                    active = true,
-                    isPlaying = display.isPlaying,
-                    curTime = display.currentPosition,
-                    totalTime = display.duration.takeIf { it > 0 } ?: inlineState.totalTime,
-                    buffering = false,
-                    hidden = false,
-                )
+                inlineState =
+                    inlineState.copy(
+                        active = true,
+                        isPlaying = display.isPlaying,
+                        curTime = display.currentPosition,
+                        totalTime = display.duration.takeIf { it > 0 } ?: inlineState.totalTime,
+                        buffering = false,
+                        hidden = false,
+                    )
                 PlaybackProbe.note(
                     "inline-attach-preview",
                     "eng=${display.hashCode()} playing=${display.isPlaying}",
@@ -1040,6 +1251,32 @@ class DetailViewModel(
     /** 首集校验失败过的候选源（源 key）：下一批候选不再花一次请求重试 */
     private val autoPickTried = HashSet<String>()
 
+    /** 自动选源的阶段：早选（首批候选）/ 最终（全源跑完）。 */
+    private enum class PickPhase { None, Early, Final }
+
+    private var pickPhase = PickPhase.None
+
+    /** 早选落定的源与当时集数；升级判定以它为基准，不读换源后被清空的 [UiState.lines]。 */
+    private var autoPickedKey = ""
+    private var autoPickedEps = 0
+
+    /** 自动升级次数，上限 1（见 [shouldUpgradeAutoPick]）。 */
+    private var autoPickUpgrades = 0
+    /** playGap 源「声明 vs 首集实际可播」的复核结果；null = 还没算 */
+    private var gapProbePlayable: Boolean? = null
+
+    /** 用户手动换过源：之后所有自动选源/升级直接 return。 */
+    private var sourcePickedByUser = false
+
+    /** 候选搜索代际：重新搜索时递增，旧回调据此丢弃。 */
+    private var altSeq = 0
+
+    /** 自动选源代际：每次换源递增，挂起中的选源循环据此放弃，避免连跳多源。 */
+    private var pickSeq = 0
+
+    /** 同一时刻只允许一个自动选源循环（多个回调会并发触发）。 */
+    private var pickRunning = false
+
     /** 内嵌播放的当前集真实序号（切全屏时带过去） */
     private var inlineEpisodeIndex = 0
 
@@ -1048,6 +1285,7 @@ class DetailViewModel(
     private var inlineHeaders = ""
 
     private var inlineSaveTick = 0
+
     /** 内嵌播放上次成功落盘的位置；`-1` = 当前集还没写过 */
     private var inlineLastSavedPositionMs = -1L
 
@@ -1089,6 +1327,7 @@ class DetailViewModel(
      *  - 本方法：在详情页内嵌位播放，不跳页
      *  - [playEpisode]：跳全屏播放页（内嵌态点全屏键时走它）
      */
+
     /**
      * 点剧集：**发起会话**（FR-705 + D6 单会话架构）。
      *
@@ -1100,7 +1339,10 @@ class DetailViewModel(
      * 与全屏页各一套，产生了交接类全部问题。现在只调 [PlaybackSession.play]，
      * 解析/换源/引擎操作都在会话内。
      */
-    fun playInline(realIdx: Int, restart: Boolean = false) {
+    fun playInline(
+        realIdx: Int,
+        restart: Boolean = false,
+    ) {
         // 【先落探针再判早退】真机反馈"点击剧集没反应"——必须先能区分
         // "点击没到达"与"到达了但被早退条件挡住"，否则无法定位。
         PlaybackProbe.note(
@@ -1109,10 +1351,11 @@ class DetailViewModel(
                 "loading=${state.loading} err=${state.errMsg.take(40)}",
         )
 
-        val it = state.item ?: run {
-            PlaybackProbe.note("inline-early-return", "reason=item-null")
-            return
-        }
+        val it =
+            state.item ?: run {
+                PlaybackProbe.note("inline-early-return", "reason=item-null")
+                return
+            }
         val eps = currentEps()
         if (realIdx < 0 || realIdx >= eps.size) {
             PlaybackProbe.note("inline-early-return", "reason=idx-out-of-range size=${eps.size}")
@@ -1125,14 +1368,19 @@ class DetailViewModel(
         // 只在首次自动播放消费一次，之后手动换集仍按 0/历史恢复。
         // 【只第 1 集消费交接位置】发现页看到的就是第 1 集，那一刻的进度套到别的
         // 集上会跳到不相干的时刻；所以只认 `realIdx == 0`，且只消费一次。
-        val handoffMs = if (realIdx == 0 && handoffStartAtMs >= 0L && !handoffUsed) {
-            handoffUsed = true
-            handoffStartAtMs
-        } else -1L
-        val localUrl = DownloadCenter.itemFor(curSource, curVodId, realIdx)
-            ?.takeIf { it.canPlay }
-            ?.let { DownloadCenter.localPlayUrl(it) }
-            .orEmpty()
+        val handoffMs =
+            if (realIdx == 0 && handoffStartAtMs >= 0L && !handoffUsed) {
+                handoffUsed = true
+                handoffStartAtMs
+            } else {
+                -1L
+            }
+        val localUrl =
+            DownloadCenter
+                .itemFor(curSource, curVodId, realIdx)
+                ?.takeIf { it.canPlay }
+                ?.let { DownloadCenter.localPlayUrl(it) }
+                .orEmpty()
         val isLocal = localUrl.isNotEmpty()
         if (isLocal) {
             PlaybackProbe.note("inline-local-file", "idx=$realIdx len=${localUrl.length}")
@@ -1190,8 +1438,10 @@ class DetailViewModel(
             return
         }
         if (existing != null &&
-            (existing.status == DownloadCenter.Status.QUEUED ||
-                existing.status == DownloadCenter.Status.RUNNING)
+            (
+                existing.status == DownloadCenter.Status.QUEUED ||
+                    existing.status == DownloadCenter.Status.RUNNING
+            )
         ) {
             state = state.copy(downloadMsg = "该集正在下载")
             return
@@ -1213,21 +1463,23 @@ class DetailViewModel(
                 state = state.copy(downloadMsg = "地址解析失败，换源或稍后再试")
                 return@launch
             }
-            val ok = DownloadCenter.enqueue(
-                DownloadCenter.Request(
-                    vodId = curVodId,
-                    source = curSource,
-                    vodName = vodName,
-                    vodPic = vodPic,
-                    episodeIndex = realIdx,
-                    episodeName = ep.name,
-                    url = resolved.first,
-                    headers = parseHeaders(resolved.second),
-                ),
-            )
-            state = state.copy(
-                downloadMsg = if (ok) "已加入下载，可在「我的下载」查看" else "加入下载失败，请重试",
-            )
+            val ok =
+                DownloadCenter.enqueue(
+                    DownloadCenter.Request(
+                        vodId = curVodId,
+                        source = curSource,
+                        vodName = vodName,
+                        vodPic = vodPic,
+                        episodeIndex = realIdx,
+                        episodeName = ep.name,
+                        url = resolved.first,
+                        headers = parseHeaders(resolved.second),
+                    ),
+                )
+            state =
+                state.copy(
+                    downloadMsg = if (ok) "已加入下载，可在「我的下载」查看" else "加入下载失败，请重试",
+                )
             refreshDownloadsNow()
         }
     }
@@ -1248,7 +1500,9 @@ class DetailViewModel(
             }
         }
         if (headers.isEmpty()) {
-            val outcome = com.dengying.player.data.net.HlsUtil.resolvePlayUrlOrFail(url)
+            val outcome =
+                com.dengying.player.data.net.HlsUtil
+                    .resolvePlayUrlOrFail(url)
             PlaybackProbe.note(
                 "download-resolve-hls",
                 "resolved=${outcome.resolved} outLen=${outcome.url.length}",
@@ -1271,10 +1525,12 @@ class DetailViewModel(
     }
 
     private fun refreshDownloadsNow() {
-        val mine = DownloadCenter.snapshot()
-            .asSequence()
-            .filter { it.source == curSource && it.vodId == curVodId }
-            .associateBy { it.episodeIndex }
+        val mine =
+            DownloadCenter
+                .snapshot()
+                .asSequence()
+                .filter { it.source == curSource && it.vodId == curVodId }
+                .associateBy { it.episodeIndex }
         if (state.downloads != mine) state = state.copy(downloads = mine)
     }
 
@@ -1285,7 +1541,9 @@ class DetailViewModel(
      * 与全屏页 `hasEp()` 同一口径；没有会话时一律不可切。
      */
     fun inlineHasEp(offset: Int): Boolean {
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
         if (!s.hasSession) return false
         val idx = s.episodeIndex + offset
         return idx in currentEps().indices
@@ -1298,7 +1556,9 @@ class DetailViewModel(
      * 视图宿主。越界不动作（按钮已置灰，这里再守一道，防无障碍/手势通道越界）。
      */
     fun inlineSwitchEpisode(offset: Int) {
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
         if (!s.hasSession) return
         val target = s.episodeIndex + offset
         if (target !in currentEps().indices) return
@@ -1311,10 +1571,14 @@ class DetailViewModel(
      *
      * @return (最终地址, 请求头 JSON)；解析失败返回 null
      */
+
     /**
      * @param quiet 预解析模式：**不改 UI 状态**（用户还没点，不该看到"正在换源…"）
      */
-    private suspend fun resolveForInline(raw: String, quiet: Boolean = false): Pair<String, String>? {
+    private suspend fun resolveForInline(
+        raw: String,
+        quiet: Boolean = false,
+    ): Pair<String, String>? {
         val src = CmsSources.byKey(curSource)
         var url = raw
         var headers = ""
@@ -1326,7 +1590,9 @@ class DetailViewModel(
             }
         }
         if (headers.isEmpty()) {
-            val outcome = com.dengying.player.data.net.HlsUtil.resolvePlayUrlOrFail(url)
+            val outcome =
+                com.dengying.player.data.net.HlsUtil
+                    .resolvePlayUrlOrFail(url)
             if (!outcome.resolved) {
                 // 【内嵌播放也要有换线兜底】真机探针：`inline-resolve-done ok=false`，
                 // 因为 jyzy 源的剧集地址是**分享页**，静态正则提取不到。
@@ -1368,37 +1634,45 @@ class DetailViewModel(
         val vodName = state.item?.vod_name ?: curName
         if (vodName.isEmpty() || curSource.isEmpty()) return null
 
-        val alts = repo.findAltSources(repo.allSources(), curSource, vodName)
+        // 候选列表含当前源自己，内联兜底要剔掉，否则会试回同一个源
+        val alts =
+            repo
+                .findAltSources(repo.allSources(), curSource, vodName)
+                .filter { it.sourceKey != curSource }
         PlaybackProbe.note("inline-alt-sources", "n=${alts.size}")
         if (alts.isEmpty()) return null
 
         // 并发试所有候选，谁先成功用谁
         return kotlinx.coroutines.coroutineScope {
-            val deferred = alts.map { alt ->
-                async(ioDispatcher) {
-                    val altSrc = CmsSources.byKey(alt.sourceKey) ?: return@async null
-                    val u = repo.fetchAltPlayUrl(altSrc, alt.vodId, inlineEpisodeIndex)
-                    if (u.isEmpty()) return@async null
-                    val outcome = com.dengying.player.data.net.HlsUtil.resolvePlayUrlOrFail(u)
-                    if (!outcome.resolved) return@async null
-                    PlaybackProbe.note(
-                        "inline-alt-hit",
-                        "src=${alt.sourceKey} urlLen=${outcome.url.length}",
-                    )
-                    outcome.url to ""
+            val deferred =
+                alts.map { alt ->
+                    async(ioDispatcher) {
+                        val altSrc = CmsSources.byKey(alt.sourceKey) ?: return@async null
+                        val u = repo.fetchAltPlayUrl(altSrc, alt.vodId, inlineEpisodeIndex)
+                        if (u.isEmpty()) return@async null
+                        val outcome =
+                            com.dengying.player.data.net.HlsUtil
+                                .resolvePlayUrlOrFail(u)
+                        if (!outcome.resolved) return@async null
+                        PlaybackProbe.note(
+                            "inline-alt-hit",
+                            "src=${alt.sourceKey} urlLen=${outcome.url.length}",
+                        )
+                        outcome.url to ""
+                    }
                 }
-            }
             // 【谁先完成用谁】原写法是 `for (d in deferred) d.await()`——按**列表顺序**
             // 逐个等，于是第 1 个候选若最慢，第 3 个候选早就成功了也照样要等第 1 个
             // 失败才轮到它。注释写的"先完成的先返回"在代码里从未成立。
             // 用 select 等"最早完成且非空"的那个，其余立即取消。
             val pending = deferred.toMutableList()
             while (pending.isNotEmpty()) {
-                val r = runCatching {
-                    kotlinx.coroutines.selects.select<Pair<String, String>?> {
-                        pending.forEach { d -> d.onAwait { it } }
-                    }
-                }.getOrNull()
+                val r =
+                    runCatching {
+                        kotlinx.coroutines.selects.select<Pair<String, String>?> {
+                            pending.forEach { d -> d.onAwait { it } }
+                        }
+                    }.getOrNull()
                 if (r != null) {
                     // 取消其余候选——它们已经没用了，留着白耗流量
                     deferred.forEach { if (it.isActive) it.cancel() }
@@ -1426,80 +1700,87 @@ class DetailViewModel(
      * 续播位置也从不恢复（模拟器探针 `history-save` / `inline-restore-pos` 恒无输出）。
      * 现在由 [attachInlineSurface] / [resumeInlineIfPlaying] 经 [bindInlineEngine] 统一挂上。
      */
-    private val inlineListener = object : com.dengying.player.player.PlayerListener {
-        override fun onReady(durationMs: Long) {
-            inlineState = inlineState.copy(
-                totalTime = durationMs,
-                buffering = false,
-                errMsg = "",
-            )
-            viewModelScope.launch { restoreInlinePosition() }
-        }
+    private val inlineListener =
+        object : com.dengying.player.player.PlayerListener {
+            override fun onReady(durationMs: Long) {
+                inlineState =
+                    inlineState.copy(
+                        totalTime = durationMs,
+                        buffering = false,
+                        errMsg = "",
+                    )
+                viewModelScope.launch { restoreInlinePosition() }
+            }
 
-        override fun onPlaying() {
-            inlineState = inlineState.copy(isPlaying = true, buffering = false)
-            // 【进度循环只能启动一次】真机踩坑：`onPlaying` 在播放状态抖动时
-            // （`BUFFERING ↔ READY` 振荡导致 `isPlaying` 反复变化）会被反复调用，
-            // 而初版每次都 `launch { while(true) {...} }` ——
-            // **每触发一次就多一个永不退出的循环**，形成正反馈：
-            // 更多循环 → 更多 `currentPosition` 读取 → 更多状态更新 → 更多抖动。
-            //
-            // 用 `progressJob` 保证只有一个循环在跑：已存在就不重复启动。
-            if (progressJob?.isActive == true) return
-            progressJob = viewModelScope.launch {
-                while (true) {
-                    kotlinx.coroutines.delay(1000)
-                    val e = inlineEngine ?: break
-                    if (!e.isPlaying) continue
-                    val pos = e.currentPosition
-                    inlineState = inlineState.copy(curTime = pos)
-                    // 3 秒门槛前不写；过门槛后先立刻写一次，再每 5 tick 一次
-                    if (!HistoryWritePolicy.shouldWrite(pos)) continue
-                    inlineSaveTick++
-                    if (inlineLastSavedPositionMs < 0L || inlineSaveTick % 5 == 0) {
-                        saveInlineHistory()
+            override fun onPlaying() {
+                inlineState = inlineState.copy(isPlaying = true, buffering = false)
+                // 【进度循环只能启动一次】真机踩坑：`onPlaying` 在播放状态抖动时
+                // （`BUFFERING ↔ READY` 振荡导致 `isPlaying` 反复变化）会被反复调用，
+                // 而初版每次都 `launch { while(true) {...} }` ——
+                // **每触发一次就多一个永不退出的循环**，形成正反馈：
+                // 更多循环 → 更多 `currentPosition` 读取 → 更多状态更新 → 更多抖动。
+                //
+                // 用 `progressJob` 保证只有一个循环在跑：已存在就不重复启动。
+                if (progressJob?.isActive == true) return
+                progressJob =
+                    viewModelScope.launch {
+                        while (true) {
+                            kotlinx.coroutines.delay(1000)
+                            val e = inlineEngine ?: break
+                            if (!e.isPlaying) continue
+                            val pos = e.currentPosition
+                            inlineState = inlineState.copy(curTime = pos)
+                            // 3 秒门槛前不写；过门槛后先立刻写一次，再每 5 tick 一次
+                            if (!HistoryWritePolicy.shouldWrite(pos)) continue
+                            inlineSaveTick++
+                            if (inlineLastSavedPositionMs < 0L || inlineSaveTick % 5 == 0) {
+                                saveInlineHistory()
+                            }
+                        }
                     }
+            }
+
+            override fun onPaused() {
+                inlineState = inlineState.copy(isPlaying = false)
+                // FR-408：暂停补写一次，别等 5 秒周期
+                if (HistoryWritePolicy.shouldWrite(
+                        inlineState.curTime,
+                        inlineLastSavedPositionMs,
+                    )
+                ) {
+                    viewModelScope.launch { saveInlineHistory() }
                 }
             }
-        }
 
-        override fun onPaused() {
-            inlineState = inlineState.copy(isPlaying = false)
-            // FR-408：暂停补写一次，别等 5 秒周期
-            if (HistoryWritePolicy.shouldWrite(
-                    inlineState.curTime,
-                    inlineLastSavedPositionMs,
-                )
-            ) {
+            override fun onBuffering(active: Boolean) {
+                inlineState = inlineState.copy(buffering = active)
+            }
+
+            override fun onCompleted() {
+                inlineState = inlineState.copy(isPlaying = false)
                 viewModelScope.launch { saveInlineHistory() }
             }
-        }
 
-        override fun onBuffering(active: Boolean) {
-            inlineState = inlineState.copy(buffering = active)
-        }
+            override fun onError(
+                kind: com.dengying.player.player.PlaybackErrorKind,
+                code: Int,
+                message: String,
+            ) {
+                PlaybackProbe.note("inline-error", "kind=$kind code=$code msg=${message.take(80)}")
+                inlineState =
+                    inlineState.copy(
+                        buffering = false,
+                        errMsg = "播放失败，可换线路或全屏播放",
+                    )
+            }
 
-        override fun onCompleted() {
-            inlineState = inlineState.copy(isPlaying = false)
-            viewModelScope.launch { saveInlineHistory() }
+            override fun onVideoSize(
+                width: Int,
+                height: Int,
+            ) {
+                // 内嵌位固定 16:9，尺寸变化不影响布局，无需处理
+            }
         }
-
-        override fun onError(
-            kind: com.dengying.player.player.PlaybackErrorKind,
-            code: Int,
-            message: String,
-        ) {
-            PlaybackProbe.note("inline-error", "kind=$kind code=$code msg=${message.take(80)}")
-            inlineState = inlineState.copy(
-                buffering = false,
-                errMsg = "播放失败，可换线路或全屏播放",
-            )
-        }
-
-        override fun onVideoSize(width: Int, height: Int) {
-            // 内嵌位固定 16:9，尺寸变化不影响布局，无需处理
-        }
-    }
 
     /**
      * 绑定 / 解绑内嵌位引擎（`eng == null` 表示解绑）。
@@ -1532,16 +1813,19 @@ class DetailViewModel(
         // 拉回本页记的续播点，用户看到的就是"播放中画面突然跳回上次的位置"
         // （ResumeRestore 记录过同一现象）。会话已经指向别的集、或引擎已播到
         // 3 秒之后，都视为"不是本次内嵌起播"，不插手。
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
         val cur = inlineEngine?.currentPosition ?: 0L
-        val owns = com.dengying.player.domain.playback.InlineSessionGate.ownsEpisode(
-            vodId = curVodId,
-            source = curSource,
-            episodeIndex = inlineEpisodeIndex,
-            sessionVodId = s.vodId,
-            sessionSource = s.source,
-            sessionEpisodeIndex = s.episodeIndex,
-        )
+        val owns =
+            com.dengying.player.domain.playback.InlineSessionGate.ownsEpisode(
+                vodId = curVodId,
+                source = curSource,
+                episodeIndex = inlineEpisodeIndex,
+                sessionVodId = s.vodId,
+                sessionSource = s.source,
+                sessionEpisodeIndex = s.episodeIndex,
+            )
         if (!com.dengying.player.domain.playback.InlineSessionGate.canRestoreInline(
                 hasSession = s.hasSession,
                 ownsEpisode = owns,
@@ -1555,10 +1839,11 @@ class DetailViewModel(
             return
         }
         val pos = store.getEpisodePosition(curVodId, curSource, inlineEpisodeIndex)
-        val apply = com.dengying.player.domain.playback.ResumeRestore.apply(
-            storedMs = pos,
-            manualSeekOccurred = false,
-        )
+        val apply =
+            com.dengying.player.domain.playback.ResumeRestore.apply(
+                storedMs = pos,
+                manualSeekOccurred = false,
+            )
         PlaybackProbe.note("inline-restore-pos", "pos=$pos applied=${apply.shouldSeek} why=${apply.reason}")
         if (apply.shouldSeek) inlineEngine?.seekTo(apply.targetMs)
     }
@@ -1570,15 +1855,18 @@ class DetailViewModel(
         // 本页的进度循环同样被驱动（读的是同一个引擎）。会话已经切到别的 vod/集号时
         // 再写，历史条目就会变成「旧集号 + 别集进度」。会话已结束（hasSession=false）
         // 不拦——离页前的最后一次补写往往发生在 stop 之后。
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
-        val owns = com.dengying.player.domain.playback.InlineSessionGate.ownsEpisode(
-            vodId = curVodId,
-            source = curSource,
-            episodeIndex = inlineEpisodeIndex,
-            sessionVodId = s.vodId,
-            sessionSource = s.source,
-            sessionEpisodeIndex = s.episodeIndex,
-        )
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
+        val owns =
+            com.dengying.player.domain.playback.InlineSessionGate.ownsEpisode(
+                vodId = curVodId,
+                source = curSource,
+                episodeIndex = inlineEpisodeIndex,
+                sessionVodId = s.vodId,
+                sessionSource = s.source,
+                sessionEpisodeIndex = s.episodeIndex,
+            )
         if (!com.dengying.player.domain.playback.InlineSessionGate.canWriteHistory(
                 hasSession = s.hasSession,
                 ownsEpisode = owns,
@@ -1595,18 +1883,19 @@ class DetailViewModel(
         if (!HistoryWritePolicy.shouldWrite(pos, inlineLastSavedPositionMs)) return
         val eps = currentEps()
         val epName = eps.getOrNull(inlineEpisodeIndex)?.name ?: ""
-        val item = HistoryItem(
-            vod_id = curVodId,
-            vod_name = state.item?.vod_name ?: curName,
-            vod_pic = state.item?.vod_pic ?: curPic,
-            source = curSource,
-            vod_uri = curVodUri,
-            episodeIndex = inlineEpisodeIndex,
-            episodeName = epName,
-            position = pos,
-            duration = inlineState.totalTime,
-            updateTime = Clock.nowMs(),
-        )
+        val item =
+            HistoryItem(
+                vod_id = curVodId,
+                vod_name = state.item?.vod_name ?: curName,
+                vod_pic = state.item?.vod_pic ?: curPic,
+                source = curSource,
+                vod_uri = curVodUri,
+                episodeIndex = inlineEpisodeIndex,
+                episodeName = epName,
+                position = pos,
+                duration = inlineState.totalTime,
+                updateTime = Clock.nowMs(),
+            )
         val ok = store.saveHistory(item)
         if (ok) inlineLastSavedPositionMs = pos
         PlaybackProbe.note(
@@ -1615,7 +1904,15 @@ class DetailViewModel(
         )
     }
 
-    fun inlineEpisodeCount(): Int = if (live) 1 else state.lines.getOrNull(state.lineIdx)?.episodes?.size ?: 0
+    fun inlineEpisodeCount(): Int =
+        if (live) {
+            1
+        } else {
+            state.lines
+                .getOrNull(state.lineIdx)
+                ?.episodes
+                ?.size ?: 0
+        }
 
     fun setInlineZoomMode(mode: com.dengying.player.ui.platform.VideoZoomMode) {
         inlineState = inlineState.copy(zoomMode = mode)
@@ -1627,12 +1924,16 @@ class DetailViewModel(
         // 【必须走会话】会话的 playIntent 是唯一真源：直连引擎 pause() 时
         // 会话不知道用户暂停过，后台换源/试看升级收尾会再 play() 一次，
         // 真机表现就是「按了暂停，视频自己又播起来」（docs/04 §16.99）。
-        val sessionEngine = com.dengying.player.playback.PlaybackSession.engineOrNull()
+        val sessionEngine =
+            com.dengying.player.playback.PlaybackSession
+                .engineOrNull()
         if (inlineState.isPlaying) {
-            com.dengying.player.playback.PlaybackSession.pause()
+            com.dengying.player.playback.PlaybackSession
+                .pause()
             if (sessionEngine == null) e.pause()
         } else {
-            com.dengying.player.playback.PlaybackSession.resume()
+            com.dengying.player.playback.PlaybackSession
+                .resume()
             if (sessionEngine == null) e.play()
         }
         PlaybackProbe.note(
@@ -1664,7 +1965,9 @@ class DetailViewModel(
      * （[com.dengying.player.ui.pages.DetailScreen]）与本调用成对执行。
      */
     fun enterScreenFullscreen() {
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
         if (!s.hasSession) return
         val before = screenFullscreen.active
         screenFullscreen.enter()
@@ -1683,7 +1986,9 @@ class DetailViewModel(
         val before = screenFullscreen.active
         screenFullscreen.exit()
         if (before) {
-            val s = com.dengying.player.playback.PlaybackSession.currentState()
+            val s =
+                com.dengying.player.playback.PlaybackSession
+                    .currentState()
             PlaybackProbe.note(
                 "fullscreen-screen-only",
                 "exit pos=${s.curTime} status=${s.status}",
@@ -1709,7 +2014,8 @@ class DetailViewModel(
      */
     fun applyInlineSpeed(v: Float) {
         inlineSpeed = v
-        com.dengying.player.playback.PlaybackSession.setSpeed(v)
+        com.dengying.player.playback.PlaybackSession
+            .setSpeed(v)
         PlaybackProbe.note("inline-speed", "v=$v")
     }
 
@@ -1753,7 +2059,9 @@ class DetailViewModel(
      * no-op，用户退全屏后经正常路径重进即可。与旧 `toFullscreen` 同一校验口径。
      */
     fun openPlayerForCast() {
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
         if (!s.hasSession) return
         if (s.vodId != curVodId || s.source != curSource) {
             PlaybackProbe.note(
@@ -1812,7 +2120,9 @@ class DetailViewModel(
         // 【先落探针再判早退】真机（2026-10-31）出现过 hidden-cleared 之后
         // 既无 inline-resumed 也无 skip 证据的返回，两处早退分不清是哪条挡的。
         // 与 playInline 同一口径：必须能区分"没进来"与"进来了被挡"。
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
         if (!s.hasSession) {
             PlaybackProbe.note(
                 "inline-resume-skip",
@@ -1839,15 +2149,16 @@ class DetailViewModel(
             engineHost.surfaceActive()
         }
         val enginePlaying = e.isPlaying
-        inlineState = inlineState.copy(
-            active = true,
-            hidden = false,
-            isPlaying = enginePlaying,
-            curTime = e.currentPosition,
-            totalTime = if (e.duration > 0) e.duration else inlineState.totalTime,
-            status = "",
-            errMsg = "",
-        )
+        inlineState =
+            inlineState.copy(
+                active = true,
+                hidden = false,
+                isPlaying = enginePlaying,
+                curTime = e.currentPosition,
+                totalTime = if (e.duration > 0) e.duration else inlineState.totalTime,
+                status = "",
+                errMsg = "",
+            )
         if (enginePlaying) {
             runCatching { e.play() }
         }
@@ -1891,11 +2202,12 @@ class DetailViewModel(
      */
     fun releaseInline() {
         val previewForDiscovery = engineHost.previewEngineIfAny()
-        val handoffToDiscovery = adoptedFromDiscovery &&
-            DiscoverPlaybackRules.shouldResumeDiscoveryAfterDetail(
-                adoptedFromDiscovery = adoptedFromDiscovery,
-                previewMediaAvailable = previewForDiscovery?.currentUrl?.isNotBlank() == true,
-            )
+        val handoffToDiscovery =
+            adoptedFromDiscovery &&
+                DiscoverPlaybackRules.shouldResumeDiscoveryAfterDetail(
+                    adoptedFromDiscovery = adoptedFromDiscovery,
+                    previewMediaAvailable = previewForDiscovery?.currentUrl?.isNotBlank() == true,
+                )
         bindInlineEngine(null)
         inlineSurfaceAttached = false
         previewDisplayEngine = null
@@ -1914,9 +2226,12 @@ class DetailViewModel(
 
         // 会话归属判断：播放页活着（它的 surfaceActive 未注销）→ 由它接管，不动会话；
         // 否则本页是最后的宿主 → 结束会话（内部 pause，"返回首页声音停"）。
-        val s = com.dengying.player.playback.PlaybackSession.currentState()
+        val s =
+            com.dengying.player.playback.PlaybackSession
+                .currentState()
         if (s.hasSession && engineHost.surfaceCount() == 0) {
-            com.dengying.player.playback.PlaybackSession.stop()
+            com.dengying.player.playback.PlaybackSession
+                .stop()
         }
 
         if (handoffToDiscovery && previewForDiscovery != null) {
@@ -1939,13 +2254,19 @@ class DetailViewModel(
      */
     fun pauseInline() {
         // 同样走会话，保证 playIntent 记下「用户要暂停」，后台收尾不会复播。
-        if (com.dengying.player.playback.PlaybackSession.engineOrNull() != null) {
-            com.dengying.player.playback.PlaybackSession.pause()
+        if (com.dengying.player.playback.PlaybackSession
+                .engineOrNull() != null
+        ) {
+            com.dengying.player.playback.PlaybackSession
+                .pause()
         } else {
             inlineEngine?.pause()
         }
         inlineState = inlineState.copy(isPlaying = false)
-        PlaybackProbe.note("inline-pause", "eng=${inlineEngine?.hashCode()} sess=${com.dengying.player.playback.PlaybackSession.engineOrNull()?.hashCode()}")
+        PlaybackProbe.note(
+            "inline-pause",
+            "eng=${inlineEngine?.hashCode()} sess=${com.dengying.player.playback.PlaybackSession.engineOrNull()?.hashCode()}",
+        )
     }
 
     fun consumeInlineError() {
@@ -2003,27 +2324,28 @@ class DetailViewModel(
             }
         }
 
-        pendingPlayerRoute = Routes.player(
-            // 【用已解析地址】内嵌态切全屏时传的是 `overrideUrl`（已解析的 68 字节地址）。
-            // 若这里仍传 `ep.url`（原始分享页地址），播放页会重新跑解析链——
-            // 真机反馈"点全屏好像又触发了一次缓存"就是这个原因。
-            url = playUrl,
-            title = "${it.vod_name} ${ep.name}",
-            vodId = curVodId,
-            source = curSource,
-            vodName = it.vod_name,
-            vodPic = it.vod_pic,
-            vodUri = curVodUri,
-            lineFrom = state.lines.getOrNull(state.lineIdx)?.name ?: "",
-            episodeIndex = realIdx,
-            episodeName = ep.name,
-            altUrls = altUrls,
-            epUrls = eps.map { e -> e.url },
-            epNames = eps.map { e -> e.name },
-            startAtMs = startAtMs,
-            headersJson = overrideHeaders,
-            localFile = isLocal,
-        )
+        pendingPlayerRoute =
+            Routes.player(
+                // 【用已解析地址】内嵌态切全屏时传的是 `overrideUrl`（已解析的 68 字节地址）。
+                // 若这里仍传 `ep.url`（原始分享页地址），播放页会重新跑解析链——
+                // 真机反馈"点全屏好像又触发了一次缓存"就是这个原因。
+                url = playUrl,
+                title = "${it.vod_name} ${ep.name}",
+                vodId = curVodId,
+                source = curSource,
+                vodName = it.vod_name,
+                vodPic = it.vod_pic,
+                vodUri = curVodUri,
+                lineFrom = state.lines.getOrNull(state.lineIdx)?.name ?: "",
+                episodeIndex = realIdx,
+                episodeName = ep.name,
+                altUrls = altUrls,
+                epUrls = eps.map { e -> e.url },
+                epNames = eps.map { e -> e.name },
+                startAtMs = startAtMs,
+                headersJson = overrideHeaders,
+                localFile = isLocal,
+            )
     }
 
     fun consumePlayerRoute() {
@@ -2090,18 +2412,19 @@ class DetailViewModel(
         val vodId = curVodId
         val source = curSource
         val epIndex = inlineEpisodeIndex
-        val item = HistoryItem(
-            vod_id = vodId,
-            vod_name = state.item?.vod_name ?: curName,
-            vod_pic = state.item?.vod_pic ?: curPic,
-            source = source,
-            vod_uri = curVodUri,
-            episodeIndex = epIndex,
-            episodeName = currentEps().getOrNull(epIndex)?.name ?: "",
-            position = pos,
-            duration = inlineState.totalTime,
-            updateTime = Clock.nowMs(),
-        )
+        val item =
+            HistoryItem(
+                vod_id = vodId,
+                vod_name = state.item?.vod_name ?: curName,
+                vod_pic = state.item?.vod_pic ?: curPic,
+                source = source,
+                vod_uri = curVodUri,
+                episodeIndex = epIndex,
+                episodeName = currentEps().getOrNull(epIndex)?.name ?: "",
+                position = pos,
+                duration = inlineState.totalTime,
+                updateTime = Clock.nowMs(),
+            )
         kotlinx.coroutines.CoroutineScope(ioDispatcher).launch {
             val ok = store.saveHistoryBlocking(item)
             PlaybackProbe.note(
@@ -2124,8 +2447,9 @@ class DetailViewModel(
  * 【它绝不表示播放状态】会话、引擎、进度一概不读不写；「有没有会话」只作为
  * 进入守卫——无会话时全屏键本就不可见，这里是双保险。
  */
-internal class ScreenFullscreenState(private val hasSession: () -> Boolean) {
-
+internal class ScreenFullscreenState(
+    private val hasSession: () -> Boolean,
+) {
     var active by mutableStateOf(false)
         private set
 

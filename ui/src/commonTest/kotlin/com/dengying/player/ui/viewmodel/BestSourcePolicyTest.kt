@@ -98,4 +98,66 @@ class BestSourcePolicyTest {
         )
         assertEquals(listOf("hulu_ffzy"), complete)
     }
+
+    // ---- 早选之后的唯一一次升级（FR-635）----
+
+    @Test
+    fun `集数未知时不拿它做升级依据`() {
+        assertTrue(!shouldUpgradeAutoPick(fromEps = -1, toEps = 40, played = false, userPicked = false, upgrades = 0))
+        assertTrue(!shouldUpgradeAutoPick(fromEps = 12, toEps = -1, played = false, userPicked = false, upgrades = 0))
+        assertTrue(!shouldUpgradeAutoPick(fromEps = 0, toEps = 40, played = false, userPicked = false, upgrades = 0))
+    }
+
+    @Test
+    fun `集数到一点五倍才升级`() {
+        assertTrue(shouldUpgradeAutoPick(12, 18, played = false, userPicked = false, upgrades = 0))
+        assertTrue(shouldUpgradeAutoPick(12, 40, played = false, userPicked = false, upgrades = 0))
+    }
+
+    @Test
+    fun `只多一两集不升级`() {
+        assertTrue(!shouldUpgradeAutoPick(12, 17, played = false, userPicked = false, upgrades = 0))
+        assertTrue(!shouldUpgradeAutoPick(40, 41, played = false, userPicked = false, upgrades = 0))
+    }
+
+    @Test
+    fun `已起播不升级`() {
+        assertTrue(!shouldUpgradeAutoPick(12, 40, played = true, userPicked = false, upgrades = 0))
+    }
+
+    @Test
+    fun `用户手动选过不升级`() {
+        assertTrue(!shouldUpgradeAutoPick(12, 40, played = false, userPicked = true, upgrades = 0))
+    }
+
+    @Test
+    fun `升级用满一次就不再升`() {
+        assertTrue(!shouldUpgradeAutoPick(12, 40, played = false, userPicked = false, upgrades = 1))
+    }
+
+    @Test
+    fun `playGap 源在候选集数全未知时仍给出兜底目标`() {
+        val fallback = unprobedGapFallback(
+            currentKey = "ah_ap2233",
+            candidates = listOf(
+                SourceFacts("ah_ap2233", 8),
+                SourceFacts("lzi", -1),
+                SourceFacts("baofeng", -1),
+                SourceFacts("ah_guapi", 0),
+            ),
+        )
+        assertEquals(listOf("lzi", "baofeng", "ah_guapi"), fallback)
+    }
+
+    @Test
+    fun `兜底目标跳过当前源与已探到集数的候选`() {
+        val fallback = unprobedGapFallback(
+            currentKey = "ah_ap2233",
+            candidates = listOf(
+                SourceFacts("hulu_ffzy", 40),
+                SourceFacts("lzi", -1),
+            ),
+        )
+        assertEquals(listOf("lzi"), fallback)
+    }
 }

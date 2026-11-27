@@ -782,7 +782,11 @@ suspend fun findFullSource(
 ): Pair<String, String>? {
     PlaybackProbe.note("session-switch-source")
     if (vodName.isEmpty()) return null
-    val alts = repo.findAltSources(repo.allSources(), source, vodName).take(altLimit)
+    // 候选列表现在含发起源自己（仓库不再按源过滤），兜底换源必须剔掉它，
+    // 否则会「换」回同一个源、白试一轮。
+    val alts = repo.findAltSources(repo.allSources(), source, vodName)
+        .filter { it.sourceKey != source }
+        .take(altLimit)
     return kotlinx.coroutines.supervisorScope {
         val deferred = alts.map { alt ->
             // supervisorScope 接收者上的 async：单个候选失败不连坐其余候选。
