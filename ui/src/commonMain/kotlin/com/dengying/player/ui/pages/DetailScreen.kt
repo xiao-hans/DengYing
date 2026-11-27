@@ -6,6 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -43,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -54,8 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dengying.player.ui.UiDepsHolder
 import com.dengying.player.core.CmsSources
-import com.dengying.player.core.Episode
 import com.dengying.player.core.VideoItem
+import com.dengying.player.core.Episode
 import com.dengying.player.player.PlaybackProbe
 import com.dengying.player.ui.components.DyIcon
 import com.dengying.player.ui.components.DyIcons
@@ -171,7 +174,8 @@ fun DetailScreen(
     // 【纯屏幕形态例外（FR-711）】内嵌全屏形态下本页自己请求横屏（见全屏分支），
     // 若这里仍无条件收敛，进入形态的下一帧就被顶回竖屏——方向横竖抖动。
     // 故全屏形态时不收敛；退出形态后本调用重新生效，兜底收敛竖屏。
-    if (!vm.screenOnlyFullscreen) ConsumePortraitOrientation()
+    val adaptiveSpec = LocalAdaptiveSpec.current
+    if (!vm.screenOnlyFullscreen && !adaptiveSpec.isLargeScreen) ConsumePortraitOrientation()
 
     // FR-711：平台方向/系统栏状态。进入/退出全屏形态时与 VM 状态成对调用：
     // 进入 = vm.enterScreenFullscreen() + fullscreen.enter(landscape=true)，
@@ -312,11 +316,19 @@ fun DetailScreen(
             // 播放器**始终是左栏第一个子项**，跨断点只有一个调用点：方向/窗口
             // 变化只改 weight 与右栏是否出现，不会重建 InlinePlayer，会话与进度
             // 都留在 ViewModel 里（FR-711 的同一原则）。
-            val largeDetail = LocalAdaptiveSpec.current.isLargeScreen
+            val spec = adaptiveSpec
+            val largeDetail = spec.detailTwoPane
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = AdaptiveSpec.DETAIL_TWO_PANE_MAX_DP.dp)
+                    .align(Alignment.CenterHorizontally)
+                    .padding(if (largeDetail) AdaptiveSpec.DETAIL_OUTER_MARGIN_DP.dp else 0.dp),
+            ) {
             Row(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
-                    .weight(if (largeDetail) 0.56f else 1f)
+                    .weight(if (largeDetail) AdaptiveSpec.DETAIL_LEFT_WEIGHT else 1f)
                     .fillMaxHeight(),
             ) {
                 // ---- 内嵌播放位（FR-705）----
@@ -372,6 +384,7 @@ fun DetailScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .then(if (largeDetail) Modifier.heightIn(max = AdaptiveSpec.DETAIL_PLAYER_MAX_HEIGHT_DP.dp) else Modifier)
                         .onGloballyPositioned { slotRect = it.boundsInWindow() }
                         .graphicsLayer {
                             val from = heroFrom
@@ -396,6 +409,7 @@ fun DetailScreen(
                     live = vm.inlineState.live,
                     zoomMode = vm.inlineState.zoomMode,
                     onZoomModeChange = { vm.setInlineZoomMode(it) },
+                    controlSizeDp = spec.embeddedControlDp,
                     isPlaying = vm.inlineState.isPlaying,
                     curTime = vm.inlineState.curTime,
                     totalTime = vm.inlineState.totalTime,
@@ -429,6 +443,7 @@ fun DetailScreen(
                 Column(
                     modifier = Modifier
                         .weight(1f)
+                        .then(if (largeDetail) Modifier.padding(end = AdaptiveSpec.DETAIL_GAP_DP.dp / 2f) else Modifier)
                         .verticalScroll(rememberScrollState()),
                 ) {
                     InfoBlock(s.item!!)
@@ -442,21 +457,26 @@ fun DetailScreen(
             if (largeDetail) {
                 Column(
                     modifier = Modifier
-                        .weight(0.44f)
+                        .weight(AdaptiveSpec.DETAIL_RIGHT_WEIGHT)
                         .fillMaxHeight()
+                        .padding(start = AdaptiveSpec.DETAIL_GAP_DP.dp / 2f)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    // 右栏按栏宽算列数：1280dp 下约 5 列（每格 ≈105dp），
-                    // 1920dp 封顶 8 列。手机不走这里，仍是原 4 列。
+                    var paneWidthDp by remember { mutableStateOf(spec.widthDp * AdaptiveSpec.DETAIL_RIGHT_WEIGHT) }
+                    val paneDensity = LocalDensity.current
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth().onSizeChanged {
+                        paneWidthDp = with(paneDensity) { it.width.toDp().value }
+                    }) {
+                        Box(Modifier.fillMaxSize())
+                    }
                     DetailSecondaryBlock(
                         vm = vm,
                         s = s,
-                        columns = AdaptiveSpec.episodeColumns(
-                            LocalAdaptiveSpec.current.widthDp * 0.44f,
-                        ),
+                        columns = AdaptiveSpec.episodeColumns(paneWidthDp),
                         cellHeight = 52.dp,
                     )
                 }
+            }
             }
             }
             }
@@ -465,7 +485,15 @@ fun DetailScreen(
             // 先按真实版式把信息块画出来，比空白转圈更接近"已经开了"的观感。
             // 封面走进程级 PosterCache，从首页点进来的这一张基本已在内存里。
             s.loading -> Column(modifier = Modifier.fillMaxSize()) {
-                SkeletonInfoBlock(name = name, pic = pic)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .widthIn(max = AdaptiveSpec.DETAIL_TWO_PANE_MAX_DP.dp)
+                        .align(Alignment.CenterHorizontally)
+                        .padding(if (adaptiveSpec.detailTwoPane) AdaptiveSpec.DETAIL_OUTER_MARGIN_DP.dp else 0.dp),
+                ) {
+                    SkeletonInfoBlock(name = name, pic = pic)
+                }
                 Box(Modifier.fillMaxWidth().padding(top = 24.dp), Alignment.Center) {
                     CircularProgressIndicator(color = Palette.Brand, strokeWidth = 3.dp)
                 }
@@ -1159,6 +1187,9 @@ private fun DetailFullscreenView(
         live = vm.inlineState.live,
         zoomMode = vm.inlineState.zoomMode,
         onZoomModeChange = { vm.setInlineZoomMode(it) },
+        controlSizeDp = LocalAdaptiveSpec.current.fullscreenPrimaryDp,
+        progressHeightDp = 28f,
+        progressThumbDp = 12f,
         isPlaying = vm.inlineState.isPlaying,
         curTime = vm.inlineState.curTime,
         totalTime = vm.inlineState.totalTime,

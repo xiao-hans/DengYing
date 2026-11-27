@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,6 +45,7 @@ import com.dengying.player.player.PlaybackProbe
 import com.dengying.player.ui.components.DyIcon
 import com.dengying.player.ui.components.DyIcons
 import com.dengying.player.ui.layout.LocalAdaptiveSpec
+import com.dengying.player.ui.layout.AdaptiveSpec
 import com.dengying.player.ui.components.GlassBackButton
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.SeekPreviewBubble
@@ -625,6 +627,7 @@ private fun ControlOverlay(
         GlassSurface(
             modifier = Modifier
                 .fillMaxWidth()
+                .widthIn(max = AdaptiveSpec.MAX_FULLSCREEN_DP.dp)
                 // 与 InlinePlayer 全屏顶栏同一口径：控件贴屏幕边缘，只留 6dp，
                 // 不引入 safe area inset（用户明确接受返回键落在挖孔区域）。
                 .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
@@ -822,6 +825,7 @@ private fun ControlOverlay(
         GlassSurface(
             modifier = Modifier
                 .fillMaxWidth()
+                .widthIn(max = AdaptiveSpec.MAX_FULLSCREEN_DP.dp)
                 .align(Alignment.BottomCenter)
                 // 与 InlinePlayer 全屏底栏同一口径：贴底 6dp。
                 .padding(start = 6.dp, end = 6.dp, bottom = 6.dp),
@@ -1021,14 +1025,12 @@ private fun CtrlIcon(
 ) {
     // 【变量名不能叫 size】它会遮蔽 `Modifier.size()` 扩展函数，
     // 导致 `Modifier.size(size)` 解析失败（真机编译时踩到）。
-    // 大屏只放大尺寸：主键 56dp、次键 48dp，满足 48dp 触控下限；
+    // 大屏用自适应主键/次键尺寸，满足 48dp 触控下限；
     // 顺序、语义、布局都不变（FR-707 单行、FR-711 会话零中断）。
-    val large = LocalAdaptiveSpec.current.isLargeScreen
+    val spec = LocalAdaptiveSpec.current
     val buttonSize = when {
-        large && primary -> 56.dp
-        large -> 48.dp
-        primary -> 46.dp
-        else -> 40.dp
+        primary -> spec.fullscreenPrimaryDp.dp
+        else -> spec.fullscreenSecondaryDp.dp
     }
     Box(
         modifier = Modifier
@@ -1052,10 +1054,8 @@ private fun CtrlIcon(
                 icon = icon,
                 tint = tint,
                 size = when {
-                    large && primary -> 30.dp
-                    large -> 24.dp
-                    primary -> 28.dp
-                    else -> 22.dp
+                    primary -> (spec.fullscreenPrimaryDp * 0.54f).dp
+                    else -> (spec.fullscreenSecondaryDp * 0.50f).dp
                 },
                 contentDescription = label.ifEmpty { null },
             )

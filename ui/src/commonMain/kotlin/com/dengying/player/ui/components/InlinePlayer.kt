@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -50,6 +51,7 @@ import com.dengying.player.player.PlayerEngine
 import com.dengying.player.ui.platform.rememberBrightnessController
 import com.dengying.player.ui.platform.rememberVolumeController
 import com.dengying.player.ui.prefs.PlaybackPrefs
+import com.dengying.player.ui.layout.AdaptiveSpec
 import com.dengying.player.ui.theme.Palette
 
 /**
@@ -169,6 +171,10 @@ fun InlinePlayer(
     /** 当前画面缩放；默认 FIT 不影响既有调用。 */
     zoomMode: VideoZoomMode = VideoZoomMode.FIT,
     onZoomModeChange: (VideoZoomMode) -> Unit = {},
+    /** 控件尺寸由外层按宽度档传入；InlinePlayer 自身不读取断点。 */
+    controlSizeDp: Float = 34f,
+    progressHeightDp: Float = 20f,
+    progressThumbDp: Float = 9f,
     modifier: Modifier = Modifier,
 ) {
     var dragValue by remember { mutableLongStateOf(0L) }
@@ -679,6 +685,7 @@ fun InlinePlayer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .then(if (fullscreen) Modifier.widthIn(max = AdaptiveSpec.MAX_FULLSCREEN_DP.dp) else Modifier)
                     // 【全屏控件贴边】用户明确要求返回键/进度条贴住屏幕边缘，
                     // 只留 6dp；横屏挖孔与手势条不再让位。内嵌位保持原样。
                     .then(if (fullscreen) Modifier.padding(start = 6.dp, end = 6.dp, bottom = 6.dp) else Modifier)
@@ -706,7 +713,7 @@ fun InlinePlayer(
                 BoxWithConstraints(
                     modifier = Modifier
                         .weight(1f)
-                        .height(20.dp)
+                        .height(progressHeightDp.dp)
                         .then(
                             if (live) Modifier else Modifier
                                 .pointerInput(Unit) {
@@ -755,7 +762,7 @@ fun InlinePlayer(
                     Box(
                         modifier = Modifier
                             .offset(x = w * fraction - 5.dp)
-                            .size(if (dragging) 12.dp else 9.dp)
+                            .size(if (dragging) (progressThumbDp + 3f).dp else progressThumbDp.dp)
                             .background(Palette.Danger, CircleShape),
                     )
                 }
@@ -796,6 +803,7 @@ fun InlinePlayer(
                         label = "上一集",
                         enabled = canPrev,
                         onClick = onPrev,
+                        sizeDp = controlSizeDp,
                     )
                     Spacer(Modifier.width(4.dp))
                     InlineIconButton(
@@ -809,6 +817,7 @@ fun InlinePlayer(
                         label = "下一集",
                         enabled = canNext,
                         onClick = onNext,
+                        sizeDp = controlSizeDp,
                     )
                     Spacer(Modifier.width(4.dp))
                 }
@@ -817,6 +826,7 @@ fun InlinePlayer(
                     icon = if (fullscreen) DyIcons.FullscreenExit else DyIcons.Fullscreen,
                     label = if (fullscreen) "退出全屏" else "全屏",
                     onClick = if (fullscreen) onExitFullscreen else onEnterFullscreen,
+                    sizeDp = controlSizeDp,
                 )
             }
         }
@@ -839,6 +849,7 @@ fun InlinePlayer(
                     zoomSheet = nextZoom
                     speedSheet = nextSpeed
                 },
+                controlSizeDp = controlSizeDp,
             )
 
             // ---- 倍速面板（FR-711 扩展）----
@@ -890,6 +901,7 @@ private fun FullscreenTopBar(
     onCast: (() -> Unit)?,
     zoomMode: VideoZoomMode,
     onZoomClick: () -> Unit,
+    controlSizeDp: Float,
 ) {
     androidx.compose.animation.AnimatedVisibility(
         visible = controlsVisible,
@@ -900,6 +912,7 @@ private fun FullscreenTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .widthIn(max = AdaptiveSpec.MAX_FULLSCREEN_DP.dp)
                 // 【全屏控件贴边】返回键左边距屏幕左缘 6dp：不再用 safeDrawing
                 // 让开横屏挖孔（vivo V2419A 左侧 120px）；用户明确要求贴边，
                 // 返回键仍是 34dp 圆形热区，压在挖孔区域也能点。
@@ -911,6 +924,7 @@ private fun FullscreenTopBar(
                 icon = DyIcons.ArrowBack,
                 label = "返回",
                 onClick = onExitFullscreen,
+                sizeDp = controlSizeDp,
             )
             Spacer(Modifier.width(8.dp))
             Text(
@@ -1052,10 +1066,11 @@ private fun InlineIconButton(
     label: String,
     enabled: Boolean = true,
     onClick: () -> Unit,
+    sizeDp: Float = 34f,
 ) {
     Box(
         modifier = Modifier
-            .size(34.dp)
+            .size(sizeDp.dp)
             .background(
                 Color.White.copy(alpha = if (enabled) 0.12f else 0.06f),
                 CircleShape,
@@ -1067,7 +1082,7 @@ private fun InlineIconButton(
             icon = icon,
             // 禁用态压暗但不隐藏：用户要能看出"有上一集/下一集这个能力"
             tint = Color.White.copy(alpha = if (enabled) 1f else 0.35f),
-            size = 19.dp,
+            size = (sizeDp * 0.56f).dp,
             contentDescription = label,
         )
     }

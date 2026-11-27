@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.dengying.player.ui.UiDepsHolder
 import com.dengying.player.domain.ui.ConfirmSpec
@@ -34,6 +36,7 @@ import com.dengying.player.ui.components.GlassClearButton
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.Poster
 import com.dengying.player.ui.components.GlassPage
+import com.dengying.player.ui.layout.LocalAdaptiveSpec
 import com.dengying.player.ui.navigation.Routes
 import com.dengying.player.ui.theme.Palette
 import com.dengying.player.ui.viewmodel.HistoryViewModel
@@ -57,6 +60,12 @@ fun HistoryScreen(
 ) {
     androidx.compose.runtime.LaunchedEffect(Unit) { vm.reload() }
     val s = vm.state
+    val spec = LocalAdaptiveSpec.current
+    val contentWidth = if (spec.contentMaxDp.isInfinite()) {
+        Dp.Infinity
+    } else {
+        spec.contentMaxDp.dp
+    }
 
     // 【透射源】顶栏是 overlay、历史列表是 content（兄弟层）：
     // 列表上滑时从顶栏背后穿过，玻璃返回环与「清空」透出真实封面。
@@ -67,6 +76,7 @@ fun HistoryScreen(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // 让出顶栏高度（顶栏在 overlay 层，不参与内容排版）
         Spacer(Modifier.height(56.dp))
@@ -91,7 +101,7 @@ fun HistoryScreen(
             )
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().widthIn(max = contentWidth),
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -170,6 +180,8 @@ fun HistoryScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .widthIn(max = contentWidth)
+                    .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .height(56.dp)
                     .padding(horizontal = 12.dp),

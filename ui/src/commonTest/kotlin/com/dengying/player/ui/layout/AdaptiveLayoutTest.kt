@@ -7,8 +7,6 @@ import kotlin.test.assertTrue
 
 class AdaptiveLayoutTest {
 
-    // ---- 宽度分档 ----
-
     @Test
     fun widthClassBoundaries() {
         assertEquals(WidthClass.Compact, AdaptiveSpec.from(599.9f, 800f).widthClass)
@@ -20,59 +18,68 @@ class AdaptiveLayoutTest {
     }
 
     @Test
-    fun phoneKeepsFrozenColumns() {
+    fun phoneKeepsFrozenValues() {
         val phone = AdaptiveSpec.from(347f, 753f)
         assertEquals(WidthClass.Compact, phone.widthClass)
         assertEquals(3, phone.gridColumns)
         assertEquals(2, phone.feedColumns)
-        assertEquals(0f, phone.contentSideDp)
-        assertEquals(0f, phone.railWidthDp)
-        assertFalse(phone.showsRail)
+        assertTrue(phone.contentMaxDp.isInfinite())
+        assertEquals(12f, phone.sidePaddingDp)
+        assertTrue(phone.heroMaxDp.isInfinite())
+        assertEquals(112f, phone.railCardDp)
+        assertEquals(34f, phone.embeddedControlDp)
+        assertEquals(44f, phone.fullscreenPrimaryDp)
+        assertEquals(40f, phone.fullscreenSecondaryDp)
+        assertFalse(phone.detailTwoPane)
     }
 
     @Test
-    fun columnsPerWidthClass() {
-        assertEquals(4, AdaptiveSpec.from(600f, 960f).gridColumns)
-        assertEquals(3, AdaptiveSpec.from(600f, 960f).feedColumns)
-        assertEquals(5, AdaptiveSpec.from(840f, 800f).gridColumns)
-        assertEquals(4, AdaptiveSpec.from(840f, 800f).feedColumns)
-        assertEquals(6, AdaptiveSpec.from(1280f, 800f).gridColumns)
-        assertEquals(4, AdaptiveSpec.from(1280f, 800f).feedColumns)
-    }
+    fun columnsAndLimitsPerWidthClass() {
+        val medium = AdaptiveSpec.from(600f, 960f)
+        assertEquals(4, medium.gridColumns)
+        assertEquals(3, medium.feedColumns)
+        assertEquals(720f, medium.contentMaxDp)
+        assertEquals(24f, medium.sidePaddingDp)
+        assertEquals(720f, medium.heroMaxDp)
+        assertEquals(128f, medium.railCardDp)
+        assertEquals(44f, medium.embeddedControlDp)
+        assertEquals(56f, medium.fullscreenPrimaryDp)
+        assertEquals(48f, medium.fullscreenSecondaryDp)
+        assertFalse(medium.detailTwoPane)
 
-    // ---- 大屏判定：宽 + 短边 ----
+        val expanded = AdaptiveSpec.from(840f, 800f)
+        assertEquals(5, expanded.gridColumns)
+        assertEquals(4, expanded.feedColumns)
+        assertEquals(1120f, expanded.contentMaxDp)
+        assertEquals(32f, expanded.sidePaddingDp)
+        assertEquals(960f, expanded.heroMaxDp)
+        assertEquals(144f, expanded.railCardDp)
+        assertTrue(expanded.detailTwoPane)
+
+        val wide = AdaptiveSpec.from(1280f, 800f)
+        assertEquals(6, wide.gridColumns)
+        assertEquals(4, wide.feedColumns)
+        assertEquals(1280f, wide.contentMaxDp)
+        assertEquals(32f, wide.sidePaddingDp)
+        assertEquals(960f, wide.heroMaxDp)
+        assertEquals(160f, wide.railCardDp)
+        assertTrue(wide.detailTwoPane)
+    }
 
     @Test
     fun landscapePhoneIsNotLargeScreen() {
-        // 915×412 的横屏手机宽度已过 840dp，但短边不够。
         val spec = AdaptiveSpec.from(915f, 412f)
+        assertEquals(WidthClass.Expanded, spec.widthClass)
         assertFalse(spec.isLargeScreen)
-        assertFalse(spec.showsRail)
-        assertEquals(0f, spec.railWidthDp)
+        assertFalse(spec.detailTwoPane)
         assertEquals(5, spec.gridColumns)
-    }
-
-    @Test
-    fun tabletLandscapeIsLargeScreen() {
-        val spec = AdaptiveSpec.from(1280f, 800f)
-        assertTrue(spec.isLargeScreen)
-        assertTrue(spec.showsRail)
-        assertEquals(88f, spec.railWidthDp)
-        assertEquals(48f, spec.minTouchDp)
     }
 
     @Test
     fun tabletPortraitUsesShortSideWidth() {
-        // 竖屏 800×1280：宽度只有 800，不进 rail 档。
-        assertFalse(AdaptiveSpec.from(800f, 1280f).isLargeScreen)
-        assertEquals(4, AdaptiveSpec.from(800f, 1280f).gridColumns)
-    }
-
-    @Test
-    fun largePortraitTabletIsLargeScreen() {
-        val spec = AdaptiveSpec.from(1024f, 1366f)
-        assertTrue(spec.isLargeScreen)
-        assertEquals(5, spec.gridColumns)
+        val portrait = AdaptiveSpec.from(800f, 1280f)
+        assertEquals(WidthClass.Medium, portrait.widthClass)
+        assertFalse(portrait.detailTwoPane)
     }
 
     @Test
@@ -84,38 +91,16 @@ class AdaptiveLayoutTest {
         }
         val noHeight = AdaptiveSpec.from(1280f, Float.NaN)
         assertEquals(WidthClass.Compact, noHeight.widthClass)
-        assertFalse(noHeight.isLargeScreen)
-    }
-
-    // ---- 居中留白 ----
-
-    @Test
-    fun sidePaddingOnlyGrowsBeyondMaxContent() {
-        assertEquals(12f, AdaptiveSpec.sidePadding(400f, AdaptiveSpec.MAX_CONTENT_DP), 0.001f)
-        assertEquals(12f, AdaptiveSpec.sidePadding(1280f, AdaptiveSpec.MAX_CONTENT_DP), 0.001f)
-        assertEquals(172f, AdaptiveSpec.sidePadding(1600f, AdaptiveSpec.MAX_CONTENT_DP), 0.001f)
+        assertFalse(noHeight.detailTwoPane)
     }
 
     @Test
-    fun contentSideTracksMaxContentWidth() {
-        assertEquals(0f, AdaptiveSpec.from(1280f, 800f).contentSideDp)
-        assertEquals(160f, AdaptiveSpec.from(1600f, 900f).contentSideDp, 0.001f)
-        assertEquals(0f, AdaptiveSpec.from(900f, 800f).feedSideDp)
-        assertEquals(190f, AdaptiveSpec.from(1280f, 800f).feedSideDp, 0.001f)
-    }
-
-    // ---- 海报高 / 剧集列 ----
-
-    @Test
-    fun posterHeightKeepsPhoneCardUnchanged() {
-        // 手机卡宽约 105dp → 1.30 倍后仍被夹到 140，等于改前的固定高。
-        assertEquals(140f, AdaptiveSpec.posterHeight(105f), 0.001f)
+    fun posterHeightClampsToDesignRange() {
         assertEquals(140f, AdaptiveSpec.posterHeight(60f), 0.001f)
-        assertEquals(240f, AdaptiveSpec.posterHeight(400f), 0.001f)
+        assertEquals(147f, AdaptiveSpec.posterHeight(105f), 0.001f)
+        assertEquals(220f, AdaptiveSpec.posterHeight(400f), 0.001f)
         assertEquals(140f, AdaptiveSpec.posterHeight(0f), 0.001f)
         assertEquals(140f, AdaptiveSpec.posterHeight(Float.NaN), 0.001f)
-        // 平板宽卡按比例变高，但不超过上限。
-        assertEquals(195f, AdaptiveSpec.posterHeight(150f), 0.001f)
     }
 
     @Test
@@ -126,17 +111,5 @@ class AdaptiveLayoutTest {
         assertEquals(8, AdaptiveSpec.episodeColumns(2000f))
         assertEquals(4, AdaptiveSpec.episodeColumns(0f))
         assertEquals(4, AdaptiveSpec.episodeColumns(Float.NaN))
-    }
-
-    // ---- 全屏控件尺寸 ----
-
-    @Test
-    fun fullscreenControlsOnlyGrowOnLargeScreen() {
-        val phone = AdaptiveSpec.from(347f, 753f)
-        assertEquals(46f, phone.ctrlPrimaryDp, 0.001f)
-        assertEquals(40f, phone.ctrlSecondaryDp, 0.001f)
-        val tablet = AdaptiveSpec.from(1280f, 800f)
-        assertEquals(56f, tablet.ctrlPrimaryDp, 0.001f)
-        assertEquals(48f, tablet.ctrlSecondaryDp, 0.001f)
     }
 }

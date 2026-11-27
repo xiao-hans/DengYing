@@ -43,6 +43,7 @@ import com.dengying.player.core.VideoItem
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.HomeFeedSkeleton
 import com.dengying.player.ui.components.Poster
+import com.dengying.player.ui.layout.AdaptiveSpec
 import com.dengying.player.ui.theme.Palette
 import kotlinx.coroutines.delay
 
@@ -87,11 +88,14 @@ internal fun HomeFeedView(
     columns: Int = 2,
     // 超宽屏居中留白：1280dp 以外不在一条长线上排卡。
     sidePadding: Dp = 0.dp,
+    contentMax: Dp = Dp.Infinity,
+    heroMax: Dp = Dp.Infinity,
+    railCardWidth: Dp = 112.dp,
 ) {
     val layout = buildHomeFeedLayout(sections)
     LazyColumn(
         state = state,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().widthIn(max = contentMax),
         contentPadding = PaddingValues(start = sidePadding, end = sidePadding, top = topPadding, bottom = bottomPadding),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
@@ -103,7 +107,7 @@ internal fun HomeFeedView(
                     HeroCarousel(
                         items = layout.hero,
                         onOpen = onOpen,
-                        modifier = Modifier.widthIn(max = 900.dp).fillMaxWidth(),
+                        modifier = Modifier.widthIn(max = heroMax).fillMaxWidth(),
                     )
                 }
             }
@@ -126,8 +130,10 @@ internal fun HomeFeedView(
                             onClick = { onOpen(v) },
                         )
                     }
-                    // 奇数条时补一个同宽空位，避免最后一张卡被拉成整行宽
-                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                    // 末行不留半空：按整行列数补齐不可点占位的同样卡片宽度。
+                    repeat(columns.coerceAtLeast(1) - row.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
                 }
             }
         }
@@ -143,7 +149,7 @@ internal fun HomeFeedView(
                 ) {
                     items(count = Int.MAX_VALUE, key = { i -> "loop-${rail.title}-$i" }) { i ->
                         val v = rail.items[i % rail.items.size]
-                        RailCard(v = v, onClick = { onOpen(v) })
+                        RailCard(v = v, cardWidth = railCardWidth, onClick = { onOpen(v) })
                     }
                 }
             }
@@ -313,10 +319,10 @@ private fun HotGridCard(v: VideoItem, modifier: Modifier, onClick: () -> Unit) {
 
 /** 分类 rail 的竖版小卡。 */
 @Composable
-private fun RailCard(v: VideoItem, onClick: () -> Unit) {
+private fun RailCard(v: VideoItem, cardWidth: Dp, onClick: () -> Unit) {
     Column(
         modifier = Modifier
-            .width(112.dp)
+            .width(cardWidth)
             .clickable(onClick = onClick),
     ) {
         Poster(
@@ -324,7 +330,7 @@ private fun RailCard(v: VideoItem, onClick: () -> Unit) {
             title = v.vod_name,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(156.dp),
+                .height(AdaptiveSpec.posterHeight(cardWidth.value).dp),
             cornerRadius = 14,
         )
         Text(

@@ -32,6 +32,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.dengying.player.ui.UiDepsHolder
 import com.dengying.player.core.CmsSources
@@ -51,6 +52,7 @@ import com.dengying.player.ui.components.Poster
 import com.dengying.player.ui.components.SkeletonResultRows
 import com.dengying.player.ui.components.rememberSkeletonColor
 import com.dengying.player.ui.components.GlassPage
+import com.dengying.player.ui.layout.LocalAdaptiveSpec
 import com.dengying.player.ui.navigation.Routes
 import com.dengying.player.ui.theme.Palette
 import com.dengying.player.ui.viewmodel.SearchViewModel
@@ -67,6 +69,12 @@ fun SearchScreen(
     },
 ) {
     val s = vm.state
+    val spec = LocalAdaptiveSpec.current
+    val contentWidth = if (spec.contentMaxDp.isInfinite()) {
+        Dp.Infinity
+    } else {
+        spec.contentMaxDp.dp
+    }
     val focusRequester = androidx.compose.runtime.remember { FocusRequester() }
     val listState = rememberLazyListState()
 
@@ -136,6 +144,7 @@ fun SearchScreen(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // 让出搜索栏高度（栏在 overlay 层，不参与内容排版）。
         // 【只在没有结果时垫】有结果时列表要铺满整屏、从 y=0 开始画，
@@ -184,7 +193,7 @@ fun SearchScreen(
 
             s.results.isNotEmpty() -> {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().widthIn(max = contentWidth),
                     state = listState,
                     // 顶部让出搜索栏（overlay 层）的高度：条目从 y=0 开始排，
                     // 上滑时穿过玻璃搜索栏背后，玻璃里透出真实封面与片名。
@@ -219,6 +228,8 @@ fun SearchScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .widthIn(max = contentWidth)
+                    .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .height(60.dp)
                     .padding(horizontal = 12.dp),

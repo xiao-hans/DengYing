@@ -167,10 +167,13 @@ fun HomeFeedSkeleton(
     bottomPadding: Dp,
     columns: Int = 2,
     sidePadding: Dp = 0.dp,
+    contentMax: Dp = Dp.Infinity,
+    heroMax: Dp = Dp.Infinity,
+    railCardWidth: Dp = 112.dp,
 ) {
     val block = rememberSkeletonColor()
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().widthIn(max = contentMax),
         contentPadding = PaddingValues(start = sidePadding, end = sidePadding, top = topPadding, bottom = bottomPadding),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         userScrollEnabled = false,
@@ -182,7 +185,7 @@ fun HomeFeedSkeleton(
                     block,
                     Modifier
                         .padding(horizontal = 14.dp)
-                        .widthIn(max = 900.dp)
+                        .widthIn(max = heroMax)
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f),
                     radius = 22.dp,
@@ -205,7 +208,11 @@ fun HomeFeedSkeleton(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 repeat(3) {
-                    SkeletonBlock(block, Modifier.width(112.dp).height(156.dp), radius = 14.dp)
+                    SkeletonBlock(
+                        block,
+                        Modifier.width(railCardWidth).height(com.dengying.player.ui.layout.AdaptiveSpec.posterHeight(railCardWidth.value).dp),
+                        radius = 14.dp,
+                    )
                 }
             }
         }

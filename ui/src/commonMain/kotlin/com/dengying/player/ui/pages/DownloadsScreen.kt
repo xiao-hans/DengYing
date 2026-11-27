@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.dengying.player.data.download.DownloadCenter
 import com.dengying.player.ui.components.EmptyView
@@ -41,6 +43,7 @@ import com.dengying.player.ui.components.GlassPage
 import com.dengying.player.ui.components.GlassSurface
 import com.dengying.player.ui.components.Poster
 import com.dengying.player.ui.components.formatBytesText
+import com.dengying.player.ui.layout.LocalAdaptiveSpec
 import com.dengying.player.ui.theme.Palette
 import kotlinx.coroutines.delay
 
@@ -61,6 +64,12 @@ fun DownloadsScreen(
     }
 
     val used = items.sumOf { it.bytes }
+    val spec = LocalAdaptiveSpec.current
+    val contentWidth = if (spec.contentMaxDp.isInfinite()) {
+        Dp.Infinity
+    } else {
+        spec.contentMaxDp.dp
+    }
 
     GlassPage(
         modifier = Modifier.fillMaxSize(),
@@ -69,6 +78,7 @@ fun DownloadsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.statusBars),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Spacer(Modifier.height(56.dp))
                 if (items.isEmpty()) {
@@ -81,7 +91,7 @@ fun DownloadsScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().widthIn(max = contentWidth),
                         contentPadding = PaddingValues(
                             start = 12.dp,
                             end = 12.dp,
@@ -105,6 +115,8 @@ fun DownloadsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .widthIn(max = contentWidth)
+                    .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .height(56.dp)
                     .padding(horizontal = 12.dp),
