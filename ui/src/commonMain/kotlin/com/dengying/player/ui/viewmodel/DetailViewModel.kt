@@ -1100,7 +1100,7 @@ class DetailViewModel(
      * 与全屏页各一套，产生了交接类全部问题。现在只调 [PlaybackSession.play]，
      * 解析/换源/引擎操作都在会话内。
      */
-    fun playInline(realIdx: Int) {
+    fun playInline(realIdx: Int, restart: Boolean = false) {
         // 【先落探针再判早退】真机反馈"点击剧集没反应"——必须先能区分
         // "点击没到达"与"到达了但被早退条件挡住"，否则无法定位。
         PlaybackProbe.note(
@@ -1143,7 +1143,7 @@ class DetailViewModel(
         // 【交接集不恢复历史进度】画面已经在播发现页那一刻的位置了；再让
         // [restoreInlinePosition] 按历史/第 0 秒恢复一次，用户会看到画面被拽回去。
         // 交接集直接沿用引擎里的位置，等于把"恢复"这一步也算做完了。
-        if (handoffMs >= 0L) inlinePositionRestored = true
+        if (handoffMs >= 0L || restart) inlinePositionRestored = true
         // 【历史条目按集记账】这里曾漏赋值，导致内嵌播放无论点哪集都写 episodeIndex=0；
         // 续播/alt 拉流也同用一个序号，必须与本次点击的集一致。
         inlineEpisodeIndex = realIdx

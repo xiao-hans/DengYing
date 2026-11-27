@@ -62,6 +62,7 @@ import com.dengying.player.core.Episode
 import com.dengying.player.player.PlaybackProbe
 import com.dengying.player.ui.components.DyIcon
 import com.dengying.player.ui.components.DyIcons
+import com.dengying.player.ui.components.EpisodeDrawer
 import com.dengying.player.ui.components.GlassBackButton
 import com.dengying.player.ui.components.GlassChip
 import com.dengying.player.ui.components.GlassSurface
@@ -1178,53 +1179,84 @@ private fun DetailFullscreenView(
     liveMode: Boolean = false,
 ) {
     SideEffect { vm.attachInlineSurface() }
-    InlinePlayer(
-        engine = vm.inlineEngine,
-        title = vm.inlineState.title,
-        episodeName = vm.inlineState.episodeName,
-        episodeIndex = vm.inlineState.episodeIndex,
-        episodeCount = vm.inlineEpisodeCount(),
-        live = vm.inlineState.live,
-        zoomMode = vm.inlineState.zoomMode,
-        onZoomModeChange = { vm.setInlineZoomMode(it) },
-        controlSizeDp = LocalAdaptiveSpec.current.fullscreenPrimaryDp,
-        progressHeightDp = 28f,
-        progressThumbDp = 12f,
-        isPlaying = vm.inlineState.isPlaying,
-        curTime = vm.inlineState.curTime,
-        totalTime = vm.inlineState.totalTime,
-        buffering = vm.inlineState.buffering,
-        errMsg = vm.inlineState.errMsg,
-        status = vm.inlineState.status,
-        active = vm.inlineState.active,
-        hidden = vm.inlineState.hidden || !pageActive,
-        canPrev = vm.inlineHasEp(-1),
-        canNext = vm.inlineHasEp(1),
-        onTogglePlay = { vm.toggleInlinePlay() },
-        onSeek = { pos -> vm.seekInline(pos) },
-        onPrev = { vm.inlineSwitchEpisode(-1) },
-        onNext = { vm.inlineSwitchEpisode(1) },
-        onBoostStart = { vm.beginInlineBoost() },
-        onBoostEnd = { vm.endInlineBoost() },
-        fullscreen = true,
-        // 全屏形态下控制栏的进全屏键已切换为「退出全屏」，本回调不会触发
-        onEnterFullscreen = {},
-        onExitFullscreen = {
-            vm.exitScreenFullscreen()
-            fullscreen.exit()
-            if (liveMode) onBack()
-        },
-        // FR-711 全屏形态扩展（2026-11-15 用户反馈）：倍速 + 投屏键
-        speed = vm.inlineSpeed,
-        onSpeedChange = { vm.applyInlineSpeed(it) },
-        // 「投屏」= 升级到播放页：投屏状态机只在 PlayerViewModel，
-        // 详情页不复制它；交接走 FR-705 既有会话 adopt（不重解析）。
-        onCast = { vm.openPlayerForCast() },
-        modifier = Modifier.fillMaxSize(),
-    )
-    PlatformBackHandler(enabled = true) {
+    val pageState = vm.state
+    var showEpisodes by remember { mutableStateOf(false) }
+    val displayEps = pageState.lines.getOrNull(pageState.lineIdx)?.episodes.orEmpty()
+    val episodeNames = if (pageState.descOrder) {
+        displayEps.asReversed().map { it.name }
+    } else {
+        displayEps.map { it.name }
+    }
+    val episodeIndices = if (pageState.descOrder) {
+        displayEps.indices.reversed().toList()
+    } else {
+        displayEps.indices.toList()
+    }
+    val cells = episodeCells(episodeNames, episodeIndices, pageState.playingEp)
+    val exitFullscreen = {
         vm.exitScreenFullscreen()
         fullscreen.exit()
         if (liveMode) onBack()
+    }
+    Box(Modifier.fillMaxSize()) {
+        InlinePlayer(
+            engine = vm.inlineEngine,
+            title = vm.inlineState.title,
+            episodeName = vm.inlineState.episodeName,
+            episodeIndex = vm.inlineState.episodeIndex,
+            episodeCount = vm.inlineEpisodeCount(),
+            live = vm.inlineState.live,
+            zoomMode = vm.inlineState.zoomMode,
+            onZoomModeChange = { vm.setInlineZoomMode(it) },
+            controlSizeDp = LocalAdaptiveSpec.current.fullscreenPrimaryDp,
+            progressHeightDp = 28f,
+            progressThumbDp = 12f,
+            isPlaying = vm.inlineState.isPlaying,
+            curTime = vm.inlineState.curTime,
+            totalTime = vm.inlineState.totalTime,
+            buffering = vm.inlineState.buffering,
+            errMsg = vm.inlineState.errMsg,
+            status = vm.inlineState.status,
+            active = vm.inlineState.active,
+            hidden = vm.inlineState.hidden || !pageActive,
+            canPrev = vm.inlineHasEp(-1),
+            canNext = vm.inlineHasEp(1),
+            onTogglePlay = { vm.toggleInlinePlay() },
+            onSeek = { pos -> vm.seekInline(pos) },
+            onPrev = { vm.inlineSwitchEpisode(-1) },
+            onNext = { vm.inlineSwitchEpisode(1) },
+            onBoostStart = { vm.beginInlineBoost() },
+            onBoostEnd = { vm.endInlineBoost() },
+            fullscreen = true,
+            // 全屏形态下控制栏的进全屏键已切换为「退出全屏」，本回调不会触发
+            onEnterFullscreen = {},
+            onExitFullscreen = exitFullscreen,
+            // FR-711 全屏形态扩展（2026-11-15 用户反馈）：倍速 + 投屏键
+            speed = vm.inlineSpeed,
+            onSpeedChange = { vm.applyInlineSpeed(it) },
+            onOpenEpisodes = { showEpisodes = true },
+            // 「投屏」= 升级到播放页：投屏状态机只在 PlayerViewModel，
+            // 详情页不复制它；交接走 FR-705 既有会话 adopt（不重解析）。
+            onCast = { vm.openPlayerForCast() },
+            modifier = Modifier.fillMaxSize(),
+        )
+        EpisodeDrawer(
+            visible = showEpisodes && !vm.inlineState.live && cells.size > 1,
+            cells = cells,
+            columns = 4,
+            widthDp = episodeDrawerWidth(LocalAdaptiveSpec.current.widthDp),
+            onPick = { real ->
+                vm.playInline(real, restart = true)
+                showEpisodes = false
+            },
+            onDismiss = { showEpisodes = false },
+        )
+    }
+    PlatformBackHandler(enabled = true) {
+        if (showEpisodes) {
+            showEpisodes = false
+        } else {
+            exitFullscreen()
+        }
     }
 }

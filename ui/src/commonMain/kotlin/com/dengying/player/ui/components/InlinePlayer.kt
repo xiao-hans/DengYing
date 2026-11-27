@@ -139,6 +139,12 @@ fun InlinePlayer(
     speed: Float = 1.0f,
     /** 倍速选择回调；调用方负责写会话速度并回填状态（`DetailViewModel.setInlineSpeed`）。 */
     onSpeedChange: (Float) -> Unit = {},
+    /**
+     * 全屏形态「选集」文字键回调；null = 不显示。
+     *
+     * 只由详情页内嵌全屏提供：内嵌播放器的其它调用方（首页/发现页预览）没有集数抽屉。
+     */
+    onOpenEpisodes: (() -> Unit)? = null,
     /** 长按画面任意位置开始临时加速；由调用方保存原倍速。 */
     onBoostStart: () -> Unit = {},
     /** 松手 / 手势取消 / 离开页面时恢复原倍速。 */
@@ -685,14 +691,38 @@ fun InlinePlayer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (fullscreen) Modifier.widthIn(max = AdaptiveSpec.MAX_FULLSCREEN_DP.dp) else Modifier)
-                    // 【全屏控件贴边】用户明确要求返回键/进度条贴住屏幕边缘，
-                    // 只留 6dp；横屏挖孔与手势条不再让位。内嵌位保持原样。
-                    .then(if (fullscreen) Modifier.padding(start = 6.dp, end = 6.dp, bottom = 6.dp) else Modifier)
+                    // 【全屏控件贴边】控制栏铺满屏幕宽度并贴住底边，内嵌位保持原样。
                     .background(Color.Black.copy(alpha = 0.5f))
                     .padding(horizontal = 8.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // 2026-11-27 用户口径：上一集/播放/下一集统一放最左。
+                // 直播没有集的概念，仍只显示 LIVE 与不可交互的状态进度线。
+                if (!live) {
+                    InlineIconButton(
+                        icon = DyIcons.SkipPrevious,
+                        label = "上一集",
+                        enabled = canPrev,
+                        onClick = onPrev,
+                        sizeDp = controlSizeDp,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    InlineIconButton(
+                        icon = if (isPlaying) DyIcons.Pause else DyIcons.Play,
+                        label = if (isPlaying) "暂停" else "播放",
+                        onClick = onTogglePlay,
+                        sizeDp = controlSizeDp,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    InlineIconButton(
+                        icon = DyIcons.SkipNext,
+                        label = "下一集",
+                        enabled = canNext,
+                        onClick = onNext,
+                        sizeDp = controlSizeDp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 if (live) {
                     Text(
                         text = "LIVE",
@@ -777,7 +807,7 @@ fun InlinePlayer(
                     )
                 }
 
-                if (!live) Spacer(Modifier.width(4.dp))
+                if (!live) Spacer(Modifier.width(6.dp))
                 // FR-711 扩展：全屏形态补倍速键（纯文字，与播放页 :791 同口径——
                 // 「它不是图形，给图标反而看不懂」）。内嵌形态不出现。
                 // 直播不提供倍速：真机反馈（2026-11-21）直播场景倍速无意义且会打乱
@@ -797,27 +827,14 @@ fun InlinePlayer(
                     )
                     Spacer(Modifier.width(4.dp))
                 }
-                if (!live) {
-                    InlineIconButton(
-                        icon = DyIcons.SkipPrevious,
-                        label = "上一集",
-                        enabled = canPrev,
-                        onClick = onPrev,
-                        sizeDp = controlSizeDp,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    InlineIconButton(
-                        icon = if (isPlaying) DyIcons.Pause else DyIcons.Play,
-                        label = if (isPlaying) "暂停" else "播放",
-                        onClick = onTogglePlay,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    InlineIconButton(
-                        icon = DyIcons.SkipNext,
-                        label = "下一集",
-                        enabled = canNext,
-                        onClick = onNext,
-                        sizeDp = controlSizeDp,
+                if (fullscreen && !live && episodeCount > 1 && onOpenEpisodes != null) {
+                    Text(
+                        text = "选集",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier
+                            .clickable { onOpenEpisodes!!() }
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
                     )
                     Spacer(Modifier.width(4.dp))
                 }
@@ -912,12 +929,8 @@ private fun FullscreenTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = AdaptiveSpec.MAX_FULLSCREEN_DP.dp)
-                // 【全屏控件贴边】返回键左边距屏幕左缘 6dp：不再用 safeDrawing
-                // 让开横屏挖孔（vivo V2419A 左侧 120px）；用户明确要求贴边，
-                // 返回键仍是 34dp 圆形热区，压在挖孔区域也能点。
                 .background(Color.Black.copy(alpha = 0.35f))
-                .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 4.dp),
+                .padding(top = 6.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             InlineIconButton(
