@@ -73,7 +73,7 @@ harmony/  鸿蒙壳工程（DevEco Studio / hvigor），不参与 Gradle 构建
 
 ## 当前状态
 
-当前版本 **1.4.0 / 1000400**（Android / iOS / 鸿蒙三端版本声明一致）。
+当前版本 **1.4.1 / 1000401**（Android / iOS / 鸿蒙三端版本声明一致）。
 
 - **Android**：功能完整（搜索 / 详情 / 播放 / 收藏 / 历史 / GMS 投屏），Release APK 可构建；`:shared:jvmTest` 718 例、`:shared:testDebugUnitTest` 173 例、`:ui:testDebugUnitTest` 88 例、`:app:testDebugUnitTest` 41 例全绿（2026-11-24 实测）。响应式布局重做、全屏选集抽屉与底栏重排后，2026-11-27 实测 `:ui:testDebugUnitTest`、`:ui:compileDebugKotlinAndroid`、`:app:assembleDebug` 均构建成功；`EpisodePanelTest` 4 例全绿。同日根据用户截图反馈修正全屏三键尺寸，并让全屏顶栏/控制栏铺满屏幕宽度、贴住左右边缘；MuMu 国内版模拟器完成 Compact/Medium/Wide 与全屏控件布局检查，新增抽屉的真机交互、物理平板与 640dp 横屏布局未验证。
 - **iOS**：已并入本工程，Windows 侧仅验证 klib 编译；framework 链接、Xcode 构建、模拟器与真机运行未验证，需 macOS。
