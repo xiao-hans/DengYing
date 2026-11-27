@@ -58,6 +58,14 @@ object PlaybackSession {
     /** 试看尾等上限：用户长时间暂停时不把协程无限挂着 */
     private const val TRIAL_MAX_WAIT_MS = 6L * 60 * 60 * 1000
 
+    /**
+     * 判定"已播到结尾"的容差。
+     *
+     * Media3 的 position 未必精确等于 duration；末尾几百毫秒内用户再点同一集，
+     * 语义上是"重播"，不是"接着播"。
+     */
+    private const val END_TOLERANCE_MS = 1_000L
+
     enum class Status { Idle, Resolving, Buffering, Playing, Paused, Error }
 
     data class State(
@@ -130,6 +138,16 @@ object PlaybackSession {
 
     /** 幂等：同一地址已 setMedia 过则跳过（防重复打断），但 play 照常恢复 */
     private var lastSetUrl: String = ""
+
+    /**
+     * 最近一次由会话观察到播放失败的地址。
+     *
+     * 引擎在 [PlayerEngine.setMedia] 时就会写上 `currentUrl`，`prepare()` 失败后这个
+     * 地址仍留着、`duration` 还是 0，[holdingMedia] 会把它当成"画面连续"而跳过
+     * setMedia —— 用户退出重进只会看到黑屏，重试被永久吞掉。错误地址必须单独记，
+     * 命中后照常重新装载；[PlayerListener.onReady] / 新的 setMedia 会清掉它。
+     */
+    private var failedUrl: String = ""
 
     /**
      * 用户播放意图（唯一真源）。
@@ -313,8 +331,14 @@ object PlaybackSession {
                 // 从零起播，屏幕上那块画面却还挂在预览引擎上：声音/画面/控件
                 // 三套状态各说各话。现在只要「预览引擎里就是这条流」，就把会话
                 // 搬到预览引擎上，旧引擎先暂停（同一时刻只允许一个引擎出声）。
-                val preview = host?.previewEngineIfAny()?.takeIf { it.currentUrl == url }
-                if (preview != null && engine !== preview) {
+                val preview = host
+                    ?.previewEngineIfAny()
+                    ?.takeIf { it.holdingMedia(url) }
+                // 【同一台引擎、地址还在，只是 lastSetUrl 被 stop() 清了】也要接管：
+                // 接管后会话持有的就是这台引擎，`engine !== preview` 恒为 false，
+                // 旧条件会把整段跳过、lastSetUrl 永远不回填 → 下面 sameMedia 判否 →
+                // 同一条流被 setMedia 重建，画面回到解析态（发现页 → 详情 → 返回 → 再进）。
+                if (preview != null && (engine !== preview || lastSetUrl != url)) {
                     engine?.takeIf { it !== preview }?.pause()
                     engine = preview
                     adoptedPreview = preview
@@ -326,7 +350,12 @@ object PlaybackSession {
                     )
                 }
                 val eng = ensureEngine()
-                val sameMedia = lastSetUrl == url && engine != null
+                // 【不能只看 lastSetUrl】stop() 会清它，而引擎里那条流还在；引擎自己的
+                // currentUrl 同样是"同一条媒体"的证据。
+                // 【播到结尾必须重装】否则同集重播会停在片尾、放不出画面。
+                val sameMedia = url.isNotEmpty() &&
+                    (lastSetUrl == url || eng.holdingMedia(url)) &&
+                    !eng.reachedEnd()
                 // 【接管预览引擎时不要装成"正在缓冲"】
                 // 引擎里这一条已经在播了，会话只是换了个宿主视图。
                 // 沿用旧逻辑（previousStatus 还是 Idle）会先广播 Buffering、
@@ -362,6 +391,7 @@ object PlaybackSession {
                     PlaybackProbe.note("session-setMedia", "len=${url.length} start=$startAtMs eng=${eng.hashCode()}")
                     eng.setMedia(url, headers, startAtMs)
                     lastSetUrl = url
+                    failedUrl = ""
                 } else {
                     PlaybackProbe.note(
                         "session-skip-setMedia",
@@ -632,9 +662,12 @@ object PlaybackSession {
      * 状态不该回到 Resolving（docs/17 §11.5）。
      */
     private fun previewHolding(url: String): PlayerEngine? {
-        if (url.isEmpty() || engine != null) return null
+        if (url.isEmpty()) return null
+        // 【不再要求 engine == null】旧条件让"进程里已有会话引擎"（哪怕在放别的片）
+        // 一律错失交接：下面的 play 先同步写一次 Resolving + totalTime=0，详情页
+        // 立刻画出一帧加载圈，之后才在 adopt 段把预览引擎接过来。
         val preview = host?.previewEngineIfAny() ?: return null
-        return preview.takeIf { it.currentUrl == url }
+        return preview.takeIf { it.holdingMedia(url) }
     }
 
     /**
@@ -644,7 +677,29 @@ object PlaybackSession {
      * 两者都表示「画面是连续的」，不能写 Resolving、不能清 totalTime。
      */
     private fun engineHolding(url: String): PlayerEngine? =
-        engine?.takeIf { url.isNotEmpty() && lastSetUrl == url }
+        engine?.takeIf {
+            url.isNotEmpty() && !it.reachedEnd() && (lastSetUrl == url || it.holdingMedia(url))
+        }
+
+    /**
+     * 引擎里装的是不是这条流、且还没播完（= 可以接着播，不需要 setMedia）。
+     *
+     * 发现页交接、返回再进、同集重播三个入口共用同一判据；只看 `lastSetUrl`
+     * 会在 [stop] 之后失效，只看 `currentUrl` 会把"播完停在片尾"误判成连续播放。
+     */
+    private fun PlayerEngine.holdingMedia(url: String): Boolean =
+        currentUrl == url &&
+            failedUrl != url &&
+            !reachedEnd() &&
+            // 还没 READY（duration 未知、也没在播）的引擎不算"握着"这条流：
+            // 可能正停在 prepare 失败的状态上，必须重新装载才有机会恢复。
+            (duration > 0 || isPlaying)
+
+    /** 已播到结尾（容差 [END_TOLERANCE_MS]）。时长未知（0）时不算结束。 */
+    private fun PlayerEngine.reachedEnd(): Boolean {
+        val d = duration
+        return d > 0 && currentPosition >= d - END_TOLERANCE_MS
+    }
 
     /**
      * 等试看链播到尾声（剩 [TRIAL_TAIL_MS]）再让调用方换全片。
@@ -695,6 +750,7 @@ object PlaybackSession {
         val l = object : PlayerListener {
             override fun onReady(durationMs: Long) {
                 PlaybackProbe.note("session-ready", "dur=$durationMs")
+                failedUrl = ""
                 _state.value = _state.value.copy(
                     status = Status.Playing,
                     totalTime = if (durationMs > 0) durationMs else _state.value.totalTime,
@@ -728,6 +784,7 @@ object PlaybackSession {
                 message: String,
             ) {
                 PlaybackProbe.note("session-error", "kind=$kind code=$code")
+                failedUrl = _state.value.url
                 _state.value = _state.value.copy(
                     status = Status.Error,
                     errMsg = "播放失败（解码错误或地址失效）",

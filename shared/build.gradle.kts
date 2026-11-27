@@ -111,6 +111,12 @@ kotlin {
             implementation(libs.kotlin.test)
         }
 
+        // 会话交接/stop 的回归只能用可控主线程验证：play() 的同步段先广播
+        // Resolving、再在 scope.launch 里接管，必须能观察"调用返回那一刻"的状态。
+        jvmTest.dependencies {
+            implementation(libs.kotlinx.coroutines.test)
+        }
+
         // Media3 只在 androidMain：MediaCacheHost 的 Android actual 要构造
         // SimpleCache / StandaloneDatabaseProvider。ohosMain 的实现是「无缓存」降级
         // （鸿蒙侧缓存由 AVPlayer 承担）。
