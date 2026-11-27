@@ -84,3 +84,11 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
           gh release upload "${GITHUB_REF_NAME}" app/build/outputs/apk/release/app-release.apk --clobber
+
+      - name: Mirror APK to Gitee
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: ./.github/actions/gitee-upload
+        with:
+          tag: ${{ github.ref_name }}
+          file: app/build/outputs/apk/release/app-release.apk
+          token: ${{ secrets.GITEE_TOKEN }}

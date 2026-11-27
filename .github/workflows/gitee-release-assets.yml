@@ -1,9 +1,10 @@
-name: Gitee Release Assets
+name: Gitee Release Assets (backfill)
 
+# 【为什么不再 tag push 自动跑】IPA 在 macOS runner 上要 ~31 分钟，本作业等 APK+IPA
+# 齐活只有 30 分钟窗口，实测必然整单失败（run 46032701482）。现在 APK / IPA 各自在
+# 构建工作流里直接同步 Gitee（.github/actions/gitee-upload），这里退化为手动补传工具：
+# 用于补 HAP（本机手工打包，CI 不出）或修复历史 Release 附件。
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -13,7 +14,7 @@ on:
       dry_run:
         description: "Only inspect release and attachments, do not upload"
         required: false
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -47,28 +48,27 @@ jobs:
           fi
           echo "name=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for GitHub release assets
+      - name: Download available GitHub release assets
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.name }}
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 10); do
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets --clobber; then
-                APK=$(find release-assets -maxdepth 1 -type f -name '*.apk' 2>/dev/null | wc -l)
-                IPA=$(find release-assets -maxdepth 1 -type f -name '*.ipa' 2>/dev/null | wc -l)
-                if [ "$APK" -gt 0 ] && [ "$IPA" -gt 0 ]; then
-                  echo "GitHub release $TAG has APK and IPA"
+                COUNT=$(find release-assets -maxdepth 1 -type f \( -name '*.apk' -o -name '*.ipa' -o -name '*.hap' \) 2>/dev/null | wc -l)
+                if [ "$COUNT" -gt 0 ]; then
+                  echo "GitHub release $TAG has $COUNT asset(s) to mirror"
                   exit 0
                 fi
               fi
             fi
-            echo "Waiting for GitHub release $TAG assets ($i/60)"
+            echo "Waiting for GitHub release $TAG assets ($i/10)"
             sleep 30
           done
-          echo "Timed out waiting for APK and IPA on GitHub release $TAG" >&2
-          exit 1
+          echo "No APK/IPA/HAP on GitHub release $TAG yet; nothing to mirror (builds upload to Gitee themselves)" >&2
+          mkdir -p release-assets
 
       - name: Ensure Gitee release exists
         id: release

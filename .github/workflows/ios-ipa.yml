@@ -75,3 +75,13 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
           gh release upload "${GITHUB_REF_NAME}" "$RUNNER_TEMP/DengYing-unsigned.ipa" --clobber
+
+      # IPA 这里要跑 30 分钟上下，以前靠另一条工作流等它，等满就整单失败。
+      # 现在构建完直接自己传 Gitee，不存在等待窗口。
+      - name: Mirror IPA to Gitee
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: ./.github/actions/gitee-upload
+        with:
+          tag: ${{ github.ref_name }}
+          file: ${{ runner.temp }}/DengYing-unsigned.ipa
+          token: ${{ secrets.GITEE_TOKEN }}
