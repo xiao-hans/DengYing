@@ -5,8 +5,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -208,15 +213,29 @@ fun GlassChip(
     quiet: Boolean = false,
     /** 紧凑档（28dp）：悬浮玻璃控件内部用，比常规 32dp 小一号 */
     compact: Boolean = false,
+    /**
+     * 选中态强调：整枚胶囊改品牌副色描边 + 同色文字 + 前置圆点。
+     *
+     * 默认的选中态只是"更亮的面 + 半粗字"，在播放源这种一排十几枚浅色
+     * 玻璃胶囊里几乎看不出谁是当前源；这一档给"必须一眼看出来"的场景用。
+     */
+    accentSelected: Boolean = false,
     onClick: () -> Unit = {},
 ) {
     val selFill = Glass.ChipSelectedFill
     val idleFill = Glass.ChipFill
+    val accent = if (selected && accentSelected) Palette.BrandSecondary else Color.Unspecified
     Box(
         modifier = Modifier
             .height(if (compact) 28.dp else 32.dp)
             .then(
                 when {
+                    selected && accentSelected -> Modifier
+                        .shadow(6.dp, ChipShape, ambientColor = Glass.Shadow, spotColor = Glass.Shadow)
+                        .clip(ChipShape)
+                        .background(selFill, ChipShape)
+                        .background(accent.copy(alpha = 0.16f), ChipShape)
+                        .border(2.dp, accent, ChipShape)
                     selected -> Modifier
                         .shadow(6.dp, ChipShape, ambientColor = Glass.Shadow, spotColor = Glass.Shadow)
                         .clip(ChipShape)
@@ -234,13 +253,27 @@ fun GlassChip(
             .padding(horizontal = if (compact) 10.dp else 12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = text,
-            style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) Palette.TextPrimary else
-                if (quiet) Palette.TextSecondary else Palette.TextPrimary,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (accent != Color.Unspecified) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .background(accent, CircleShape),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                text = text,
+                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = when {
+                    selected && accentSelected -> Palette.BrandSecondary
+                    selected -> Palette.TextPrimary
+                    quiet -> Palette.TextSecondary
+                    else -> Palette.TextPrimary
+                },
+            )
+        }
     }
 }
 

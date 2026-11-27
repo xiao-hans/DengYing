@@ -41,7 +41,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
@@ -51,7 +50,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -703,44 +701,28 @@ private fun AltSourceBlock(
                 text = when {
                     switchingTo.isNotEmpty() -> "切换到 $switchingTo…"
                     loading -> "查找中…"
-                    else -> "另有 ${alts.size} 个"
+                    // 候选列表含当前源自己，标题只数「另有」
+                    else -> "另有 ${alts.count { it.sourceKey != currentSourceKey }} 个"
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = Palette.TextSecondary,
                 modifier = Modifier.padding(start = 8.dp),
             )
         }
-        // 源清单可到上百条：一次只铺 20 个 chip（含「当前」），其余收进弹窗，
+        // 源清单可到上百条：一次只铺 20 个 chip，其余收进弹窗，
         // 否则 FlowRow 会把详情页推得极长、每次换源都要滚半天。
         var showAll by remember { mutableStateOf(false) }
-        val (visibleCount, hidden) = splitSourceChips(alts.size)
-        val visible = alts.take(visibleCount)
+        val (chips, hidden) = sourceChips(alts, currentSourceKey)
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val currentName = CmsSources.byKey(currentSourceKey)?.name ?: currentSourceKey
-            if (currentName.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .height(32.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.Black)
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "$currentName · 当前",
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-            for (a in visible) {
+            for (c in chips) {
                 GlassChip(
-                    text = altLabel(a),
-                    onClick = { onSwitch(a) },
+                    text = c.label,
+                    selected = c.selected,
+                    accentSelected = true,
+                    onClick = if (c.selected) ({}) else ({ onSwitch(c.item) }),
                 )
             }
             if (hidden > 0) {
@@ -753,6 +735,7 @@ private fun AltSourceBlock(
         if (showAll) {
             AllSourcesDialog(
                 alts = alts,
+                currentSourceKey = currentSourceKey,
                 onSwitch = { showAll = false; onSwitch(it) },
                 onDismiss = { showAll = false },
             )
@@ -761,37 +744,11 @@ private fun AltSourceBlock(
     }
 }
 
-/** 详情页一次最多展示的播放源条数（含「当前」chip） */
-private const val MAX_VISIBLE_SOURCES = 20
-
-/**
- * 候选 chip 文案：集数已后台探测到就带上「全 N 集」。
- *
- * 换源前用户最想知道的就是"哪条更全"——以前要点进去才发现是 1 集试看线。
- * [AltItem.epCount] 为 -1 表示还没探测到，只显示源名，不写猜的数字。
- */
-private fun altLabel(a: AltItem): String =
-    if (a.epCount > 0) "${a.sourceName} · 全${a.epCount}集" else a.sourceName
-
-/**
- * 播放源 chip 切分：返回 (直接铺出的候选数, 折叠进「更多」的候选数)。
- *
- * 上限含「当前」那枚黑底 chip，所以候选只能占 `max - 1` 个位置；
- * 候选不多于上限时全部铺出，隐藏数为 0（不出现「更多」）。
- */
-internal fun splitSourceChips(
-    totalAlternatives: Int,
-    max: Int = MAX_VISIBLE_SOURCES,
-): Pair<Int, Int> {
-    val room = (max - 1).coerceAtLeast(0)
-    val visible = totalAlternatives.coerceIn(0, room)
-    return visible to (totalAlternatives - visible)
-}
-
 /** 「更多」弹窗：列出全部跨源候选，点条目直接换源。 */
 @Composable
 private fun AllSourcesDialog(
     alts: List<AltItem>,
+    currentSourceKey: String,
     onSwitch: (AltItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -803,25 +760,26 @@ private fun AllSourcesDialog(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
             ) {
                 items(alts) { a ->
+                    val isCurrent = a.sourceKey == currentSourceKey
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onSwitch(a) }
+                            .clickable(enabled = !isCurrent) { onSwitch(a) }
                             .padding(horizontal = 4.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = altLabel(a),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Palette.TextPrimary,
+                            color = if (isCurrent) Palette.BrandSecondary else Palette.TextPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            text = "切换",
+                            text = if (isCurrent) "当前" else "切换",
                             style = MaterialTheme.typography.labelMedium,
-                            color = Palette.Brand,
+                            color = if (isCurrent) Palette.BrandSecondary else Palette.Brand,
                         )
                     }
                 }
