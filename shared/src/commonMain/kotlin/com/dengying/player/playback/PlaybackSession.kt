@@ -1,17 +1,17 @@
 package com.dengying.player.playback
 
 import com.dengying.player.data.net.HlsUtil
-import com.dengying.player.player.PlayerEngineHost
 import com.dengying.player.platform.ioDispatcher
 import com.dengying.player.player.PlaybackProbe
 import com.dengying.player.player.PlayerEngine
+import com.dengying.player.player.PlayerEngineHost
 import com.dengying.player.player.PlayerListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 /**
@@ -43,7 +43,6 @@ import kotlinx.coroutines.launch
  * 本类对外方法**均应在主线程调用**；内部网络/IO 切 IO。
  */
 object PlaybackSession {
-
     private const val TAG = "DY/Session"
 
     /** tv189 免登录试看链时长（`end=300`，见 [resolvePlayChain]） */
@@ -106,16 +105,17 @@ object PlaybackSession {
     init {
         // 【会话级进度循环】唯一的进度推进器（替代初版分散在各页、
         // 且会在 onPlaying 抖动时无限累积的多个 while(true)——那是个真 bug）。
-        progressTicker = scope.launch {
-            while (true) {
-                kotlinx.coroutines.delay(1000)
-                val e = engine ?: continue
-                val s = _state.value
-                if (!s.hasSession) continue
-                if (s.status != Status.Playing) continue
-                _state.value = s.copy(curTime = e.currentPosition)
+        progressTicker =
+            scope.launch {
+                while (true) {
+                    kotlinx.coroutines.delay(1000)
+                    val e = engine ?: continue
+                    val s = _state.value
+                    if (!s.hasSession) continue
+                    if (s.status != Status.Playing) continue
+                    _state.value = s.copy(curTime = e.currentPosition)
+                }
             }
-        }
     }
 
     /**
@@ -211,14 +211,17 @@ object PlaybackSession {
         // （docs/04 §16.16.4：ap2233 的加密 token 经 caps.token=false 的直通路径
         // 落进引擎报 2001，用户只看到通用「播放失败」）。
         if (!isLocal) {
-            val gapSrc = com.dengying.player.core.CmsSources.byKey(source)
+            val gapSrc =
+                com.dengying.player.core.CmsSources
+                    .byKey(source)
             if (gapSrc != null && !gapSrc.playGap.isNullOrEmpty()) {
                 PlaybackProbe.note("playGap-hit", "source=${gapSrc.key} entry=session")
-                _state.value = _state.value.copy(
-                    status = Status.Error,
-                    errMsg = "该源暂不可播：${gapSrc.playGap}",
-                    buffering = false,
-                )
+                _state.value =
+                    _state.value.copy(
+                        status = Status.Error,
+                        errMsg = "该源暂不可播：${gapSrc.playGap}",
+                        buffering = false,
+                    )
                 return
             }
         }
@@ -231,8 +234,9 @@ object PlaybackSession {
         // 并显示缓冲态——这正是换集后应该看到的形态。
         val prev = _state.value
         val directMedia = live || isLocal
-        val switchingEpisode = !prev.hasSession ||
-            prev.vodId != vodId || prev.source != source || prev.episodeIndex != episodeIndex
+        val switchingEpisode =
+            !prev.hasSession ||
+                prev.vodId != vodId || prev.source != source || prev.episodeIndex != episodeIndex
         // 【发现页交接过门（docs/17 §11.5 原因 1）】即将播放的地址若已经装在
         // 预览引擎里，这次 play 只是「换个宿主视图」，不是重新加载：
         // 状态沿用引擎的真实状态（Playing/Paused），进度沿用引擎的位置。
@@ -247,48 +251,49 @@ object PlaybackSession {
         // `engine != null` 且 URL 没变：这不是换集，画面是连续的，写 Resolving
         // 会让详情页先闪一帧「正在解析播放地址…」并把 totalTime 清 0。
         val holding = handoffPreview ?: engineHolding(upfrontUrl)
-        _state.value = if (holding != null) {
-            prev.copy(
-                live = live,
-                // 【状态按用户意图写，不按引擎瞬时值】交接进来的引擎如果刚好被
-                // 发现页「表面归零」暂停了一瞬，按 isPlaying 写就会广播 Paused：
-                // 详情页按钮画成 ▶，而下一秒 applyIntent 又把画面放起来，于是
-                // 「图标是播放态、视频在播」一直对不上（用户 m01692 的原话）。
-                // play() 入口已置 playIntent=true，这里直接沿用它。
-                status = if (playIntent) Status.Playing else Status.Paused,
-                url = rawUrl,
-                headers = "",
-                title = title,
-                vodName = vodName,
-                vodId = vodId,
-                source = source,
-                vodUri = vodUri,
-                episodeIndex = episodeIndex,
-                episodeName = episodeName,
-                errMsg = "",
-                buffering = false,
-                curTime = holding.currentPosition,
-                totalTime = holding.duration.takeIf { it > 0 } ?: prev.totalTime,
-            )
-        } else {
-            prev.copy(
-                live = live,
-                status = Status.Resolving,
-                url = rawUrl,
-                headers = "",
-                title = title,
-                vodName = vodName,
-                vodId = vodId,
-                source = source,
-                vodUri = vodUri,
-                episodeIndex = episodeIndex,
-                episodeName = episodeName,
-                errMsg = "",
-                buffering = false,
-                curTime = if (switchingEpisode) startAtMs else prev.curTime,
-                totalTime = if (switchingEpisode) 0L else prev.totalTime,
-            )
-        }
+        _state.value =
+            if (holding != null) {
+                prev.copy(
+                    live = live,
+                    // 【状态按用户意图写，不按引擎瞬时值】交接进来的引擎如果刚好被
+                    // 发现页「表面归零」暂停了一瞬，按 isPlaying 写就会广播 Paused：
+                    // 详情页按钮画成 ▶，而下一秒 applyIntent 又把画面放起来，于是
+                    // 「图标是播放态、视频在播」一直对不上（用户 m01692 的原话）。
+                    // play() 入口已置 playIntent=true，这里直接沿用它。
+                    status = if (playIntent) Status.Playing else Status.Paused,
+                    url = rawUrl,
+                    headers = "",
+                    title = title,
+                    vodName = vodName,
+                    vodId = vodId,
+                    source = source,
+                    vodUri = vodUri,
+                    episodeIndex = episodeIndex,
+                    episodeName = episodeName,
+                    errMsg = "",
+                    buffering = false,
+                    curTime = holding.currentPosition,
+                    totalTime = holding.duration.takeIf { it > 0 } ?: prev.totalTime,
+                )
+            } else {
+                prev.copy(
+                    live = live,
+                    status = Status.Resolving,
+                    url = rawUrl,
+                    headers = "",
+                    title = title,
+                    vodName = vodName,
+                    vodId = vodId,
+                    source = source,
+                    vodUri = vodUri,
+                    episodeIndex = episodeIndex,
+                    episodeName = episodeName,
+                    errMsg = "",
+                    buffering = false,
+                    curTime = if (switchingEpisode) startAtMs else prev.curTime,
+                    totalTime = if (switchingEpisode) 0L else prev.totalTime,
+                )
+            }
 
         scope.launch {
             try {
@@ -296,15 +301,17 @@ object PlaybackSession {
                 var url = if (directMedia) rawUrl else preResolved ?: ""
                 var headers = if (directMedia) preHeaders else ""
                 var previewOnly = false
+
                 /** 本次是否接管了发现页的预览引擎（见下方交接段） */
                 var adoptedPreview: PlayerEngine? = null
                 if (!directMedia && url.isEmpty()) {
                     val resolved = resolveChain(repo, rawUrl, source, vodId, altUrls)
                     if (resolved == null) {
-                        _state.value = _state.value.copy(
-                            status = Status.Error,
-                            errMsg = "该线路地址解析失败，候选线路均不可用",
-                        )
+                        _state.value =
+                            _state.value.copy(
+                                status = Status.Error,
+                                errMsg = "该线路地址解析失败，候选线路均不可用",
+                            )
                         return@launch
                     }
                     url = resolved.url
@@ -331,9 +338,10 @@ object PlaybackSession {
                 // 从零起播，屏幕上那块画面却还挂在预览引擎上：声音/画面/控件
                 // 三套状态各说各话。现在只要「预览引擎里就是这条流」，就把会话
                 // 搬到预览引擎上，旧引擎先暂停（同一时刻只允许一个引擎出声）。
-                val preview = host
-                    ?.previewEngineIfAny()
-                    ?.takeIf { it.holdingMedia(url) }
+                val preview =
+                    host
+                        ?.previewEngineIfAny()
+                        ?.takeIf { it.holdingMedia(url) }
                 // 【同一台引擎、地址还在，只是 lastSetUrl 被 stop() 清了】也要接管：
                 // 接管后会话持有的就是这台引擎，`engine !== preview` 恒为 false，
                 // 旧条件会把整段跳过、lastSetUrl 永远不回填 → 下面 sameMedia 判否 →
@@ -353,22 +361,25 @@ object PlaybackSession {
                 // 【不能只看 lastSetUrl】stop() 会清它，而引擎里那条流还在；引擎自己的
                 // currentUrl 同样是"同一条媒体"的证据。
                 // 【播到结尾必须重装】否则同集重播会停在片尾、放不出画面。
-                val sameMedia = url.isNotEmpty() &&
-                    (lastSetUrl == url || eng.holdingMedia(url)) &&
-                    !eng.reachedEnd()
+                val sameMedia =
+                    url.isNotEmpty() &&
+                        (lastSetUrl == url || eng.holdingMedia(url)) &&
+                        !eng.reachedEnd()
                 // 【接管预览引擎时不要装成"正在缓冲"】
                 // 引擎里这一条已经在播了，会话只是换了个宿主视图。
                 // 沿用旧逻辑（previousStatus 还是 Idle）会先广播 Buffering、
                 // 把详情页 UI 打成"正在缓冲…"，用户看到的就是"切页重新加载"。
                 // 同上一处：接管后紧接着就会 applyIntent(adoptedPreview)，
                 // 状态必须按意图写，否则接管瞬间的瞬时暂停会把 UI 定成 Paused。
-                val adoptedStatus = adoptedPreview?.let {
-                    if (playIntent) Status.Playing else Status.Paused
-                }
-                val preserveSettledState = (adoptedStatus != null) || (
-                    sameMedia &&
-                        previousStatus in setOf(Status.Playing, Status.Paused) &&
-                        !previousBuffering
+                val adoptedStatus =
+                    adoptedPreview?.let {
+                        if (playIntent) Status.Playing else Status.Paused
+                    }
+                val preserveSettledState =
+                    (adoptedStatus != null) || (
+                        sameMedia &&
+                            previousStatus in setOf(Status.Playing, Status.Paused) &&
+                            !previousBuffering
                     )
                 if (!preserveSettledState) {
                     _state.value = _state.value.copy(status = Status.Buffering, buffering = true)
@@ -416,14 +427,16 @@ object PlaybackSession {
                         eng.seekTo(startAtMs)
                     }
                 }
-                _state.value = _state.value.copy(
-                    url = url,
-                    headers = headers,
-                    status = adoptedStatus
-                        ?: if (preserveSettledState) previousStatus else Status.Buffering,
-                    buffering = !preserveSettledState,
-                    isPreview = previewOnly,
-                )
+                _state.value =
+                    _state.value.copy(
+                        url = url,
+                        headers = headers,
+                        status =
+                            adoptedStatus
+                                ?: if (preserveSettledState) previousStatus else Status.Buffering,
+                        buffering = !preserveSettledState,
+                        isPreview = previewOnly,
+                    )
                 // 【接管预览引擎时不补 play()】它本来就在播；用户自己暂停过就保持暂停。
                 // 旧实现无条件 play() 会把"暂停"顶成"播放"，并让引擎多走一次起播。
                 if (adoptedPreview == null) {
@@ -459,20 +472,21 @@ object PlaybackSession {
                     val waitTrialTail = adoptedPreview != null
                     scope.launch {
                         if (waitTrialTail && !awaitTrialTail(previewUrl)) return@launch
-                        val alt = runCatching {
-                            kotlinx.coroutines.withTimeoutOrNull(20_000) {
-                                findFullSource(
-                                    repo = repo,
-                                    source = source,
-                                    vodName = vodName,
-                                    episodeIndex = episodeIndex,
-                                    ioDispatcher = ioDispatcher,
-                                    // 后台升级不必试全部候选：先成功的那个立刻换上去，
-                                    // 少试几个就能少占出网位（详情页可能正在并发预取）
-                                    altLimit = 4,
-                                )
-                            }
-                        }.getOrNull() ?: return@launch
+                        val alt =
+                            runCatching {
+                                kotlinx.coroutines.withTimeoutOrNull(20_000) {
+                                    findFullSource(
+                                        repo = repo,
+                                        source = source,
+                                        vodName = vodName,
+                                        episodeIndex = episodeIndex,
+                                        ioDispatcher = ioDispatcher,
+                                        // 后台升级不必试全部候选：先成功的那个立刻换上去，
+                                        // 少试几个就能少占出网位（详情页可能正在并发预取）
+                                        altLimit = 4,
+                                    )
+                                }
+                            }.getOrNull() ?: return@launch
                         // 期间用户可能换片/换集/离开/自己换了线路——只在仍播着
                         // 这条试看链时才升级（否则会把用户刚选的片顶掉）。
                         if (_state.value.url != previewUrl) return@launch
@@ -484,24 +498,26 @@ object PlaybackSession {
                         val e2 = ensureEngine()
                         e2.setMedia(alt.first, alt.second, pos)
                         lastSetUrl = alt.first
-                        _state.value = _state.value.copy(
-                            url = alt.first,
-                            headers = alt.second,
-                            isPreview = false,
-                            status = Status.Buffering,
-                            buffering = true,
-                        )
+                        _state.value =
+                            _state.value.copy(
+                                url = alt.first,
+                                headers = alt.second,
+                                isPreview = false,
+                                status = Status.Buffering,
+                                buffering = true,
+                            )
                         // 用户暂停过就一直暂停：后台升级只换媒体，不夺回播放权。
                         applyIntent(e2)
                     }
                 }
             } catch (e: Exception) {
                 PlaybackProbe.note("session-play-fail", "${e::class.simpleName}: ${e.message?.take(100)}")
-                _state.value = _state.value.copy(
-                    status = Status.Error,
-                    errMsg = "播放启动失败：${e::class.simpleName}",
-                    buffering = false,
-                )
+                _state.value =
+                    _state.value.copy(
+                        status = Status.Error,
+                        errMsg = "播放启动失败：${e::class.simpleName}",
+                        buffering = false,
+                    )
             }
         }
     }
@@ -530,7 +546,8 @@ object PlaybackSession {
         episodeName: String,
     ) {
         PlaybackProbe.note(
-            "session-register", "len=${url.length} vodId=$vodId ep=$episodeIndex",
+            "session-register",
+            "len=${url.length} vodId=$vodId ep=$episodeIndex",
         )
         // 【必须挂监听】会话的引擎监听只在 ensureEngine 里挂，而直达播放路径从未
         // 走过 play() —— 不挂的话 status 停在本方法置的 Buffering，无人推进到
@@ -544,24 +561,26 @@ object PlaybackSession {
         // 【不能用 url 不同判定换集】换清晰度也会换 url，但集身份没变：
         // 按 url 判会把 curTime/totalTime 归零，切换瞬间（尤其暂停态或立即
         // 返回详情页）把保留进度读成 0。集身份 = (vodId, source, episodeIndex)。
-        val sameEpisode = cur.hasSession &&
-            cur.vodId == vodId && cur.source == source && cur.episodeIndex == episodeIndex
+        val sameEpisode =
+            cur.hasSession &&
+                cur.vodId == vodId && cur.source == source && cur.episodeIndex == episodeIndex
         val switchingEpisode = !sameEpisode
-        _state.value = cur.copy(
-            url = url,
-            headers = headers,
-            title = title,
-            vodName = vodName,
-            vodId = vodId,
-            source = source,
-            vodUri = vodUri,
-            episodeIndex = episodeIndex,
-            episodeName = episodeName,
-            status = if (cur.status == Status.Idle) Status.Buffering else cur.status,
-            errMsg = "",
-            curTime = if (switchingEpisode) 0L else cur.curTime,
-            totalTime = if (switchingEpisode) 0L else cur.totalTime,
-        )
+        _state.value =
+            cur.copy(
+                url = url,
+                headers = headers,
+                title = title,
+                vodName = vodName,
+                vodId = vodId,
+                source = source,
+                vodUri = vodUri,
+                episodeIndex = episodeIndex,
+                episodeName = episodeName,
+                status = if (cur.status == Status.Idle) Status.Buffering else cur.status,
+                errMsg = "",
+                curTime = if (switchingEpisode) 0L else cur.curTime,
+                totalTime = if (switchingEpisode) 0L else cur.totalTime,
+            )
     }
 
     /**
@@ -576,15 +595,16 @@ object PlaybackSession {
         source: String,
         vodId: Long,
         altUrls: List<String>,
-    ): PlayChainResult? = resolvePlayChain(
-        repo = repo,
-        raw = raw,
-        source = source,
-        vodId = vodId,
-        vodName = _state.value.vodName,
-        episodeIndex = _state.value.episodeIndex,
-        ioDispatcher = ioDispatcher,
-    )
+    ): PlayChainResult? =
+        resolvePlayChain(
+            repo = repo,
+            raw = raw,
+            source = source,
+            vodId = vodId,
+            vodName = _state.value.vodName,
+            episodeIndex = _state.value.episodeIndex,
+            ioDispatcher = ioDispatcher,
+        )
 
     fun pause() {
         PlaybackProbe.note("session-pause", "eng=${engine?.hashCode()}")
@@ -615,7 +635,9 @@ object PlaybackSession {
     }
 
     fun currentPosition(): Long = engine?.currentPosition ?: 0L
+
     fun duration(): Long = engine?.duration ?: 0L
+
     fun isPlaying(): Boolean = engine?.isPlaying == true
 
     /**
@@ -725,8 +747,9 @@ object PlaybackSession {
 
     private fun ensureEngine(): PlayerEngine {
         engine?.let { return it }
-        val h = host
-            ?: error("PlaybackSession.init(host) 未被调用：平台壳必须在播放前注入引擎宿主")
+        val h =
+            host
+                ?: error("PlaybackSession.init(host) 未被调用：平台壳必须在播放前注入引擎宿主")
         val e = h.engine()
         engine = e
         // bindListener 自身幂等（同一引擎重复调用会直接返回），换引擎时会搬监听。
@@ -747,53 +770,59 @@ object PlaybackSession {
             listenerEngine = e
             return
         }
-        val l = object : PlayerListener {
-            override fun onReady(durationMs: Long) {
-                PlaybackProbe.note("session-ready", "dur=$durationMs")
-                failedUrl = ""
-                _state.value = _state.value.copy(
-                    status = Status.Playing,
-                    totalTime = if (durationMs > 0) durationMs else _state.value.totalTime,
-                    buffering = false,
-                    errMsg = "",
-                )
-            }
+        val l =
+            object : PlayerListener {
+                override fun onReady(durationMs: Long) {
+                    PlaybackProbe.note("session-ready", "dur=$durationMs")
+                    failedUrl = ""
+                    _state.value =
+                        _state.value.copy(
+                            status = Status.Playing,
+                            totalTime = if (durationMs > 0) durationMs else _state.value.totalTime,
+                            buffering = false,
+                            errMsg = "",
+                        )
+                }
 
-            override fun onPlaying() {
-                _state.value = _state.value.copy(status = Status.Playing, buffering = false)
-            }
+                override fun onPlaying() {
+                    _state.value = _state.value.copy(status = Status.Playing, buffering = false)
+                }
 
-            override fun onPaused() {
-                if (_state.value.status == Status.Playing) {
+                override fun onPaused() {
+                    if (_state.value.status == Status.Playing) {
+                        _state.value = _state.value.copy(status = Status.Paused)
+                    }
+                }
+
+                override fun onBuffering(active: Boolean) {
+                    _state.value = _state.value.copy(buffering = active)
+                }
+
+                override fun onCompleted() {
+                    PlaybackProbe.note("session-completed")
                     _state.value = _state.value.copy(status = Status.Paused)
                 }
-            }
 
-            override fun onBuffering(active: Boolean) {
-                _state.value = _state.value.copy(buffering = active)
-            }
+                override fun onError(
+                    kind: com.dengying.player.player.PlaybackErrorKind,
+                    code: Int,
+                    message: String,
+                ) {
+                    PlaybackProbe.note("session-error", "kind=$kind code=$code")
+                    failedUrl = _state.value.url
+                    _state.value =
+                        _state.value.copy(
+                            status = Status.Error,
+                            errMsg = "播放失败（解码错误或地址失效）",
+                            buffering = false,
+                        )
+                }
 
-            override fun onCompleted() {
-                PlaybackProbe.note("session-completed")
-                _state.value = _state.value.copy(status = Status.Paused)
+                override fun onVideoSize(
+                    width: Int,
+                    height: Int,
+                ) {}
             }
-
-            override fun onError(
-                kind: com.dengying.player.player.PlaybackErrorKind,
-                code: Int,
-                message: String,
-            ) {
-                PlaybackProbe.note("session-error", "kind=$kind code=$code")
-                failedUrl = _state.value.url
-                _state.value = _state.value.copy(
-                    status = Status.Error,
-                    errMsg = "播放失败（解码错误或地址失效）",
-                    buffering = false,
-                )
-            }
-
-            override fun onVideoSize(width: Int, height: Int) {}
-        }
         engineListener = l
         listenerEngine = e
         e.addListener(l)
@@ -815,11 +844,16 @@ object PlaybackSession {
  * @param vodName 跨源换线需要片名查同名资源；为空则跳过换源兜底
  * @param episodeIndex 换源时取候选源的同一集
  */
+
 /**
  * 播放链解析结果。[previewOnly] = tv189 免登录试看链（end=300）回落——跨源没
  * 救回全片时 UI 据此打「试看」角标，不再默默只给 5 分钟（用户反馈 #1）。
  */
-class PlayChainResult(val url: String, val headers: String, val previewOnly: Boolean)
+class PlayChainResult(
+    val url: String,
+    val headers: String,
+    val previewOnly: Boolean,
+)
 
 /**
  * 跨源找同名片的**全片**直链：**并发**试候选，谁先成功用谁
@@ -841,31 +875,37 @@ suspend fun findFullSource(
     if (vodName.isEmpty()) return null
     // 候选列表现在含发起源自己（仓库不再按源过滤），兜底换源必须剔掉它，
     // 否则会「换」回同一个源、白试一轮。
-    val alts = repo.findAltSources(repo.allSources(), source, vodName)
-        .filter { it.sourceKey != source }
-        .take(altLimit)
+    val alts =
+        repo
+            .findAltSources(repo.allSources(), source, vodName)
+            .filter { it.sourceKey != source }
+            .take(altLimit)
     return kotlinx.coroutines.supervisorScope {
-        val deferred = alts.map { alt ->
-            // supervisorScope 接收者上的 async：单个候选失败不连坐其余候选。
-            async(ioDispatcher) {
-                runCatching {
-                    val altSrc = com.dengying.player.core.CmsSources.byKey(alt.sourceKey)
-                        ?: return@runCatching null
-                    val u = repo.fetchAltPlayUrl(altSrc, alt.vodId, episodeIndex)
-                    if (u.isEmpty()) return@runCatching null
-                    val oc = HlsUtil.resolvePlayUrlOrFail(u)
-                    if (!oc.resolved) null else oc.url to ""
-                }.getOrNull()
+        val deferred =
+            alts.map { alt ->
+                // supervisorScope 接收者上的 async：单个候选失败不连坐其余候选。
+                async(ioDispatcher) {
+                    runCatching {
+                        val altSrc =
+                            com.dengying.player.core.CmsSources
+                                .byKey(alt.sourceKey)
+                                ?: return@runCatching null
+                        val u = repo.fetchAltPlayUrl(altSrc, alt.vodId, episodeIndex)
+                        if (u.isEmpty()) return@runCatching null
+                        val oc = HlsUtil.resolvePlayUrlOrFail(u)
+                        if (!oc.resolved) null else oc.url to ""
+                    }.getOrNull()
+                }
             }
-        }
         // 【谁先成功用谁】select 等待最早完成的候选，失败/空结果跳过继续等。
         // 旧实现按列表顺序 await：排在前面的慢候选没返回前，后面已成功的
         // 候选不会被采用（与上面的注释相反，真机表现为"明明有可用源还转圈"）。
         val pending = deferred.toMutableList()
         while (pending.isNotEmpty()) {
-            val finished = kotlinx.coroutines.selects.select<Int> {
-                pending.forEachIndexed { i, d -> d.onAwait { i } }
-            }
+            val finished =
+                kotlinx.coroutines.selects.select<Int> {
+                    pending.forEachIndexed { i, d -> d.onAwait { i } }
+                }
             val r = pending.removeAt(finished).await()
             if (r != null) {
                 deferred.forEach { if (it.isActive) it.cancel() }
@@ -900,7 +940,9 @@ suspend fun resolvePlayChain(
      */
     waitForFullSource: Boolean = false,
 ): PlayChainResult? {
-    val src = com.dengying.player.core.CmsSources.byKey(source)
+    val src =
+        com.dengying.player.core.CmsSources
+            .byKey(source)
     var url = raw
     var headers = ""
     var previewUrl = ""
@@ -920,8 +962,7 @@ suspend fun resolvePlayChain(
         }
     }
 
-    suspend fun tryAltSources(): Pair<String, String>? =
-        findFullSource(repo, source, vodName, episodeIndex, ioDispatcher, altLimit)
+    suspend fun tryAltSources(): Pair<String, String>? = findFullSource(repo, source, vodName, episodeIndex, ioDispatcher, altLimit)
 
     // 试看链：全片优先——跨源找到同名全片就播全片；所有源都没有，回落试看链
     // （300 秒也好过黑屏）。cdn 链本身就是 m3u8，无需再过分享页解析。
@@ -943,9 +984,10 @@ suspend fun resolvePlayChain(
         // 6-12 秒内出结果，远早于 300 秒）。
         if (waitForFullSource) {
             // 批量预解析：在这里等到全片（预算内），缓存里直接是全片。
-            val alt = runCatching {
-                kotlinx.coroutines.withTimeoutOrNull(12_000) { tryAltSources() }
-            }.getOrNull()
+            val alt =
+                runCatching {
+                    kotlinx.coroutines.withTimeoutOrNull(12_000) { tryAltSources() }
+                }.getOrNull()
             if (alt != null) return PlayChainResult(alt.first, alt.second, previewOnly = false)
             PlaybackProbe.note("session-preview-fallback")
             return PlayChainResult(previewUrl, "", previewOnly = true)
@@ -967,8 +1009,9 @@ suspend fun resolvePlayChain(
     // 没有试看链时的兜底同样要封顶：旧实现无上限，跨源搜索会把
     // Semaphore(2) 一直占着，中心卡只能继续转圈。到点拿不到就返回 null，
     // 让卡片继续转圈，把许可让给其他卡。
-    val alt = runCatching {
-        kotlinx.coroutines.withTimeoutOrNull(12_000) { tryAltSources() }
-    }.getOrNull()
+    val alt =
+        runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(12_000) { tryAltSources() }
+        }.getOrNull()
     return alt?.let { PlayChainResult(it.first, it.second, previewOnly = false) }
 }
