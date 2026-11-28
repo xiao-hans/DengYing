@@ -210,6 +210,7 @@ fun Poster(
 private fun PosterFallback(title: String) {
     val (c1, c2) = posterFallbackColors(title)
     Box(
+        // 海报兜底使用固定深色渐变；白色首字/播放图标只叠在这层海报占位图上
         modifier = Modifier.fillMaxSize().background(
             Brush.linearGradient(listOf(Color(c1), Color(c2))),
         ),

@@ -479,7 +479,8 @@ object DyIcons {
      * 不是 `Text("Q")`、不是 emoji、不引字体/位图：按 QQ 企鹅的
      * 「黑身 + 白肚 + 红围巾 + 黄脚」品牌配色画 Path，调用方传
      * `tint = Color.Unspecified` 走 [multiIcon] 分支；单色 tint 时退化为黑色剪影，
-     * 保证任意主题下都能绘制。24×24 网格与其余图标一致。
+     * 保证任意主题下都能绘制。此处色值是 QQ 品牌标识的固定组成部分，
+     * 不是页面表面/文字配色，不随深浅主题切换。24×24 网格与其余图标一致。
      */
     val QQ: DyIcon = multiIcon {
         val black = Color(0xFF1B1B1B)

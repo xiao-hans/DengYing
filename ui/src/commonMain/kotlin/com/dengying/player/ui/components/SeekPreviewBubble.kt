@@ -65,6 +65,7 @@ fun SeekPreviewBubble(
         val delta = SeekPreview.deltaLabel(fromMs, targetMs)
         Row(
             modifier = Modifier
+                // 固定黑底气泡叠在播放器画面上；白色时间文字与它成对，不跟随主题
                 .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(12.dp))
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,

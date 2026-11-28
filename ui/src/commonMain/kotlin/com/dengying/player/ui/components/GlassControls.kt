@@ -54,6 +54,7 @@ private val CircleGlassShape = CircleShape
  * 圆环玻璃图标按钮：返回、设置、清空等单点动作共用。
  *
  * @param dark 播放器暗玻璃控制层用：面改 Glass.DarkFill，图标固定白色。
+ * @param tint 非暗层默认取主题主文字色；暗层的白色默认值与 Glass.DarkFill 成对。
  */
 @Composable
 fun GlassCircleButton(
@@ -257,8 +258,8 @@ fun GlassTextField(
 /**
  * 玻璃主按钮：搜索 / 登录 / 注册共用，48dp 与 [GlassTextField] 严格等高。
  *
- * 面与输入框、清空按钮同一套透射玻璃（[Glass.Fill] + liquid），文字用主色。
- * 不另做实色底：实色底在粉彩柔光上会变成一块不透的板，和旁边的输入框对不上。
+ * 面用 [Glass.ActionFill] 近实底，文字用同主题成对的 [Glass.ActionText]；
+ * 与输入框的透射玻璃形成一档可辨的边界。
  */
 @Composable
 fun GlassActionButton(

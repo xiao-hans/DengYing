@@ -80,6 +80,7 @@ val LightGlass = GlassScheme(
     border = Color(0x6E0C0C09),
     // 主按钮近白实底：输入框是 60% 白玻璃，按钮必须再实一档才有轮廓
     actionFill = Color(0xF2FFFFFF),
+    // 与上面的近白实底成对；不读主题 onSurface，避免浅色玻璃按钮上出现浅色文字
     actionText = Color(0xFF0C0C09),
     shadow = Color(0x1A0C0C09),
     chipFill = Color(0x5CFFFFFF),
@@ -102,6 +103,7 @@ val DarkGlass = GlassScheme(
     border = Color(0x3DFFFFFF),
     // 主按钮亮一档：深色输入框只有 11% 白，按钮用 24% 白才看得见边界
     actionFill = Color(0x3DFFFFFF),
+    // 与上面的低透明度白玻璃底成对；固定浅色文字保证深色玻璃按钮可读
     actionText = Color(0xFFF2F2EE),
     shadow = Color(0x66000000),
     chipFill = Color(0x2EFFFFFF),

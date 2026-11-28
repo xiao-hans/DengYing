@@ -153,6 +153,7 @@ internal fun EpisodeDrawer(
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .fillMaxHeight()
+                                                // 选中底是 Palette.Brand；其文字色在下方与它成对读取 Palette.OnBrand
                                                 .background(
                                                     if (cell.selected) Palette.Brand else Palette.SearchBg,
                                                     RoundedCornerShape(6.dp),
@@ -163,7 +164,7 @@ internal fun EpisodeDrawer(
                                             Text(
                                                 text = cell.label,
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = if (cell.selected) Color.White else Palette.TextPrimary,
+                                                color = if (cell.selected) Palette.OnBrand else Palette.TextPrimary,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                             )

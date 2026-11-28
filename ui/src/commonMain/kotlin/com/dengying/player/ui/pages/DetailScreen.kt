@@ -74,6 +74,7 @@ import com.dengying.player.ui.platform.FullscreenState
 import com.dengying.player.ui.platform.PlatformBackHandler
 import com.dengying.player.ui.platform.rememberFullscreenState
 import com.dengying.player.ui.theme.Palette
+import com.dengying.player.ui.theme.Glass
 import com.dengying.player.ui.viewmodel.AltItem
 import com.dengying.player.ui.layout.AdaptiveSpec
 import com.dengying.player.ui.layout.LocalAdaptiveSpec
@@ -435,6 +436,7 @@ fun DetailScreen(
                         vm.enterScreenFullscreen()
                         fullscreen.enter(landscape = true)
                     },
+                    // 视频画面在深色屏形态下使用固定黑底 letterbox，不是页面卡片底色
                     modifier = Modifier.background(Color.Black),
                 )
                 }
@@ -908,7 +910,7 @@ private fun EpisodeBlock(
                     Box(
                         modifier = Modifier
                             .background(
-                                if (selected) Palette.Brand else Palette.SearchBg,
+                                if (selected) Glass.ChipSelectedFill else Glass.ChipFill,
                                 RoundedCornerShape(14.dp),
                             )
                             .clickable { onSelectLine(idx) }
@@ -917,7 +919,7 @@ private fun EpisodeBlock(
                         Text(
                             text = line.name,
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (selected) Color.White else Palette.TextSecondary,
+                            color = if (selected) Palette.TextPrimary else Palette.TextSecondary,
                         )
                     }
                 }
@@ -964,7 +966,7 @@ private fun EpisodeBlock(
                     Text(
                         text = downloadLabel,
                         style = fittedLabelStyle(downloadLabel, 74.dp),
-                        color = if (downloadMode) Color.White else Palette.TextSecondary,
+                        color = if (downloadMode) Palette.OnBrand else Palette.TextSecondary,
                         maxLines = 1,
                         softWrap = false,
                     )
@@ -986,7 +988,7 @@ private fun EpisodeBlock(
                         Text(
                             text = orderLabel,
                             style = fittedLabelStyle(orderLabel, 74.dp),
-                            color = if (s.descOrder) Color.White else Palette.TextSecondary,
+                            color = if (s.descOrder) Palette.OnBrand else Palette.TextSecondary,
                             maxLines = 1,
                             softWrap = false,
                         )
@@ -1067,7 +1069,7 @@ private fun EpisodeBlock(
                                 Text(
                                     text = ep.name,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (selected) Color.White else Palette.TextPrimary,
+                                    color = if (selected) Palette.OnBrand else Palette.TextPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -1100,7 +1102,7 @@ private fun EpisodeBlock(
                                     Text(
                                         text = mark,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (selected) Color.White else Palette.Brand,
+                                        color = if (selected) Palette.OnBrand else Palette.Brand,
                                         modifier = Modifier
                                             .align(Alignment.BottomEnd)
                                             .padding(horizontal = 3.dp),

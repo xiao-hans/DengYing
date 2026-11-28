@@ -195,7 +195,7 @@ fun MineScreen(
                             text = userName.trim().firstOrNull()?.uppercase() ?: "",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Palette.AppBg,
+                            color = Palette.OnBrand,
                         )
                     }
                     if (avatarUrl.isBlank() && !(loggedIn && userName.isNotBlank())) {

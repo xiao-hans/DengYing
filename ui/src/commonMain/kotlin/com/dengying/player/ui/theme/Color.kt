@@ -18,6 +18,8 @@ import androidx.compose.ui.graphics.Color
 data class PaletteScheme(
     /** 品牌主色（浅色=哑光黑；深色=暖白，反转用法自动成立） */
     val brand: Color,
+    /** 品牌主色底上的文字/图标色，深浅主题各自成对配置 */
+    val onBrand: Color,
     /** 品牌副色 */
     val brandSecondary: Color,
     /** 页面底色 */
@@ -40,6 +42,7 @@ data class PaletteScheme(
 
 val LightPalette = PaletteScheme(
     brand = Color(0xFF0C0C09),
+    onBrand = Color(0xFFFFFFFF),
     brandSecondary = Color(0xFF312C85),
     appBg = Color(0xFFF4F4F1),
     cardBg = Color(0xFFFFFFFF),
@@ -53,6 +56,7 @@ val LightPalette = PaletteScheme(
 
 val DarkPalette = PaletteScheme(
     brand = Color(0xFFEDEDE8),
+    onBrand = Color(0xFF0C0C09),
     brandSecondary = Color(0xFF8F8AD6),
     appBg = Color(0xFF111114),
     cardBg = Color(0xFF1C1C20),
@@ -76,6 +80,7 @@ val LocalPalette = staticCompositionLocalOf { LightPalette }
  */
 object Palette {
     val Brand: Color @Composable get() = LocalPalette.current.brand
+    val OnBrand: Color @Composable get() = LocalPalette.current.onBrand
     val BrandSecondary: Color @Composable get() = LocalPalette.current.brandSecondary
     val AppBg: Color @Composable get() = LocalPalette.current.appBg
     val CardBg: Color @Composable get() = LocalPalette.current.cardBg

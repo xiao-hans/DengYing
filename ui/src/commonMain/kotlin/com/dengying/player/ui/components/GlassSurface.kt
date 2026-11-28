@@ -116,6 +116,7 @@ fun GlassSurface(
                 // 液态 tint：透射感靠饱和度与低模糊，白 tint 只补可读性；
                 // 播放器等暗玻璃（fill != Glass.Fill）按调用方原样叠加
                 val tint = if (fill == stdFill) liquidTint else fill
+                // 固定白色高光：它只描述玻璃的镜面反射，不承载文字；深浅主题用 sheenAlpha 调强度
                 val specular = Brush.linearGradient(
                     colors = listOf(
                         Color.White.copy(alpha = 0.55f),

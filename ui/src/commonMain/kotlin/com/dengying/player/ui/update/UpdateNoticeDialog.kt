@@ -88,6 +88,7 @@ fun UpdateNoticeDialog(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // 固定半透明黑是弹窗遮罩；对话框本体颜色由 GlassSurface 的主题 token 提供
             .background(Color.Black.copy(alpha = 0.74f))
             .clickable(
                 indication = null,

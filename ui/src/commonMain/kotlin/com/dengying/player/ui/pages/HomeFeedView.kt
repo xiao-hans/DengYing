@@ -224,6 +224,7 @@ private fun HeroCard(v: VideoItem, modifier: Modifier = Modifier, onClick: () ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                // 固定黑色渐变是图片上的文字遮罩；下方白字只叠在这层遮罩上，不跟随主题
                 .background(
                     Brush.verticalGradient(
                         0f to Color.Transparent,

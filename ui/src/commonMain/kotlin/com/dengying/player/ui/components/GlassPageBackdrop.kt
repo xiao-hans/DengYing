@@ -112,6 +112,7 @@ private fun rememberPageGlow(): PageGlow {
     val dark = bg.luminance() < 0.4f
     return if (dark) {
         // OriginOS 深色：纯黑底，不铺彩色光。层次靠卡片比底色亮一档，不靠染色
+        // 下列背景/光色属于有意固定的页面 backdrop；前景文字由各页面按主题 Palette 着色
         PageGlow(
             bg = Color(0xFF000000),
             primary = Color.Transparent,
@@ -123,6 +124,7 @@ private fun rememberPageGlow(): PageGlow {
         )
     } else {
         // OriginOS 浅色：近白底 + 顶部极淡的冷灰蓝，几乎看不出颜色
+        // 下列背景/光色属于有意固定的页面 backdrop；前景文字由各页面按主题 Palette 着色
         PageGlow(
             bg = Color(0xFFF6F6F6),
             primary = Color(0xFFD6DCE6).copy(alpha = 0.10f),

@@ -1905,6 +1905,7 @@ private fun DiscoverVideoCard(
                             modifier =
                                 Modifier
                                     .align(Alignment.Center)
+                                    // 固定黑底 + 白色进度环叠在视频/海报上，与主题表面色无关
                                     .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                                     .padding(8.dp),
                         ) {

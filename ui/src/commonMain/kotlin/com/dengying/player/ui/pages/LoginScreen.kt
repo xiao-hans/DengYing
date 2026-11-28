@@ -130,7 +130,7 @@ fun LoginScreen(
                         .background(Palette.Brand),
                     contentAlignment = Alignment.Center,
                 ) {
-                    DyIcon(icon = DyIcons.Person, tint = Palette.AppBg, size = 30.dp)
+                    DyIcon(icon = DyIcons.Person, tint = Palette.OnBrand, size = 30.dp)
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(

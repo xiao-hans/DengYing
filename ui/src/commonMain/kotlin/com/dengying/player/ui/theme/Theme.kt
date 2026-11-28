@@ -106,9 +106,9 @@ object ThemePrefs {
  */
 private fun lightColors(p: PaletteScheme) = lightColorScheme(
     primary = p.brand,
-    onPrimary = p.cardBg,
+    onPrimary = p.onBrand,
     secondary = p.brandSecondary,
-    onSecondary = p.cardBg,
+    onSecondary = p.onBrand,
     background = p.appBg,
     onBackground = p.textPrimary,
     surface = p.cardBg,
@@ -121,9 +121,9 @@ private fun lightColors(p: PaletteScheme) = lightColorScheme(
 
 private fun darkColors(p: PaletteScheme) = darkColorScheme(
     primary = p.brand,
-    onPrimary = p.cardBg,
+    onPrimary = p.onBrand,
     secondary = p.brandSecondary,
-    onSecondary = p.cardBg,
+    onSecondary = p.onBrand,
     background = p.appBg,
     onBackground = p.textPrimary,
     surface = p.cardBg,
