@@ -1,36 +1,34 @@
 package com.dengying.player.player
 
+import com.dengying.player.platform.Log
+
 /**
- * [PlaybackProbe] 的 OHOS 实现 —— **Unit 桩**，`TODO(OHOS-device)`
+ * [PlaybackProbe] 的 OHOS 实现：直接写 HiLog。
  *
- * 【为什么允许打桩】与 iOS 先例一致：这个门面的唯一用途是**真机排障时导出日志**，
- * 不参与任何业务逻辑（写入失败不影响播放、不影响解析）。它的价值只在
- * 「vivo Android 16 全量过滤本应用日志」这种场景下才体现，而 OHOS 的日志
- * 默认可通过 `hdc hilog` 直接抓取，被系统静默过滤的风险低得多。
+ * 【为什么不落文件】OHOS 应用沙箱内写文件需要额外的 `@ohos.file.fs` 权限与目录
+ * 解析；HiLog 用 `hdc hilog` 就能抓，模拟器与真机同一条路径。Android 落文件
+ * 是因为部分 ROM 会过滤本应用日志，这个前提在 OHOS 不成立。
  *
- * 【为什么不做成 HiLog 落文件】OHOS 应用沙箱内写文件需要额外的
- * `@ohos.file.fs` 权限与目录解析，且排障日志文件本身也要能被导出——
- * 在**没有真机可以验证**「文件确实写出来了、确实能被取走」的前提下，
- * 写它属于「看起来实现了但没人验证过」的代码，比不写更糟。
- *
- * `TODO(OHOS-device)`：拿到鸿蒙真机/模拟器后，按 Android actual 的口径实现：
- * 用 `@ohos.file.fs` 写 `<filesDir>/playback.log`，单线程 executor 追加。
+ * 【约束】所有 `note` 只带长度/状态，不带完整播放地址与请求头；`dumpSharePage`
+ * 保持空实现，避免把分享页地址写进系统日志。
  */
 actual object PlaybackProbe {
 
+    private const val TAG = "DY/Probe"
+
     actual fun init(dir: String) {
-        // TODO(OHOS-device): 见 Kdoc
+        // HiLog 不需要初始化目录
     }
 
     actual fun note(tag: String, detail: String) {
-        // TODO(OHOS-device): 见 Kdoc
+        Log.w(TAG, "[$tag] $detail")
     }
 
     actual fun reset() {
-        // TODO(OHOS-device): 见 Kdoc
+        // 日志流没有可清空的缓冲
     }
 
     actual fun dumpSharePage(url: String) {
-        // TODO(OHOS-device): 见 Kdoc
+        // 不输出分享页地址
     }
 }

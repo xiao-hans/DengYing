@@ -7,6 +7,7 @@ import com.dengying.player.player.PlayerEngineHost
 import com.dengying.player.player.PlayerListener
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
+import kotlin.concurrent.Volatile
 import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVPlayer
 import platform.AVFoundation.AVPlayerItem
@@ -329,6 +330,17 @@ object IosPlayerEngineHost : PlayerEngineHost {
 
     private var surfaces = 0
 
+    /**
+     * 发现页 → 详情交接窗口。
+     *
+     * 交接期间发现页表面先归零、详情页表面后挂上，中间有几帧「无表面」。
+     * 这段时间不能暂停引擎，否则详情页拿到的是停住的流，要等会话重新 play
+     * 才动——用户看到的就是「卡一下再播」。语义与 Android
+     * `PlaybackEngineHolder.handoffInProgress` 一致。
+     */
+    @Volatile
+    private var handoffInProgress = false
+
     override fun engine(): PlayerEngine {
         instance?.let { return it }
         val created = AvPlayerEngine()
@@ -338,6 +350,28 @@ object IosPlayerEngineHost : PlayerEngineHost {
     }
 
     override fun peek(): PlayerEngine? = instance
+
+    /**
+     * 发现页预览用的就是这台主引擎。
+     *
+     * iOS 只有一条 AVPlayer 链路：再建第二台不会更快，只会多一路解码与音频。
+     * 交接靠「同一个实例 + currentUrl 判据」完成，与 Android 的双实例方案
+     * 效果一致（不 setMedia、不清 totalTime）。
+     */
+    override fun previewEngine(): PlayerEngine = engine()
+
+    /** 已经装过媒体的主引擎可以当作预览引擎交回会话；没装过就返回 null。 */
+    override fun previewEngineIfAny(): PlayerEngine? =
+        instance?.takeIf { it.currentUrl != null }
+
+    override fun isHandoffInProgress(): Boolean = handoffInProgress
+
+    override fun setHandoffInProgress(inProgress: Boolean) {
+        // 详情页每次状态刷新都会调一次（每秒），只在真正变化时记日志
+        if (handoffInProgress == inProgress) return
+        handoffInProgress = inProgress
+        PlaybackProbe.note("host-handoff", "inProgress=$inProgress")
+    }
 
     override fun surfaceActive() {
         surfaces += 1
@@ -350,8 +384,12 @@ object IosPlayerEngineHost : PlayerEngineHost {
         val engine = instance
         if (surfaces == 0 && engine != null) {
             engine.onSurfaceDetached()
-            engine.pause()
-            PlaybackProbe.note("host-no-surface-paused", "")
+            if (handoffInProgress) {
+                PlaybackProbe.note("host-no-surface-handoff", "")
+            } else {
+                engine.pause()
+                PlaybackProbe.note("host-no-surface-paused", "")
+            }
         }
     }
 
